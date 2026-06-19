@@ -29,10 +29,13 @@ class OrderController extends Controller
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.price' => 'required|numeric',
+            'items.*.discount_percentage' => 'nullable|numeric|min:0|max:100',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
             'address' => 'nullable|string',
             'payment_method' => 'nullable|string',
+            'credit_days' => 'nullable|integer|min:0',
+            'is_direct_invoice' => 'nullable|boolean',
             'requested_by_name' => 'nullable|string',
             'requested_by_id' => 'nullable|string',
             'signature' => 'nullable|string',
@@ -41,7 +44,19 @@ class OrderController extends Controller
         ]);
 
         return DB::transaction(function () use ($request) {
-            $total = collect($request->items)->sum(fn($i) => $i['price'] * $i['quantity']);
+            $total = collect($request->items)->sum(function ($i) {
+                $discount = isset($i['discount_percentage']) ? (float)$i['discount_percentage'] : 0.0;
+                return $i['price'] * $i['quantity'] * (1 - $discount / 100);
+            });
+
+            $isDirect = $request->boolean('is_direct_invoice', false);
+
+            $paymentMethod = $request->payment_method;
+            $isCredit = true;
+            if ($paymentMethod !== null) {
+                $methodLower = mb_strtolower($paymentMethod);
+                $isCredit = str_contains($methodLower, 'cred') || str_contains($methodLower, 'créd');
+            }
 
             $order = Order::create([
                 'user_id' => $request->user()->id,
@@ -52,21 +67,26 @@ class OrderController extends Controller
                 'longitude' => $request->longitude,
                 'notes' => $request->notes ?? null,
                 'address' => $request->address ?? null,
-                'payment_method' => $request->payment_method ?? null,
+                'payment_method' => $paymentMethod ?? null,
+                'credit_days' => $isCredit ? (int)($request->credit_days ?: 30) : 0,
                 'requested_by_name' => $request->requested_by_name ?? null,
                 'requested_by_id' => $request->requested_by_id ?? null,
                 'signature'     => $request->signature ?? null,
                 'delivery_date' => $request->delivery_date ?? now()->addDay()->format('Y-m-d'),
                 'branch_id'     => $request->branch_id ?? null,
+                'is_invoiced'   => $isDirect,
+                'is_preinvoiced'=> !$isDirect,
             ]);
 
             foreach ($request->items as $item) {
+                $discount = isset($item['discount_percentage']) ? (float)$item['discount_percentage'] : 0.0;
                 OrderItem::create([
                     'order_id' => $order->id,
                     'product_id' => $item['product_id'],
                     'quantity' => $item['quantity'],
                     'price' => $item['price'],
-                    'subtotal' => $item['price'] * $item['quantity'],
+                    'discount_percentage' => $discount,
+                    'subtotal' => $item['price'] * $item['quantity'] * (1 - $discount / 100),
                 ]);
             }
 

@@ -79,6 +79,7 @@ class Product {
   final int stock;
   final double taxPercentage;
   final int? categoryId;
+  final double discountPercentage;
 
   Product({
     required this.id,
@@ -87,6 +88,7 @@ class Product {
     required this.stock,
     this.taxPercentage = 15.0,
     this.categoryId,
+    this.discountPercentage = 0.0,
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -99,6 +101,9 @@ class Product {
           ? double.parse(json['tax_percentage'].toString())
           : 15.0,
       categoryId: json['category_id'],
+      discountPercentage: json['discount_percentage'] != null
+          ? double.parse(json['discount_percentage'].toString())
+          : 0.0,
     );
   }
 }

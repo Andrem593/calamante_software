@@ -39,6 +39,7 @@ class ProductController extends Controller
             'name' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
             'description' => 'nullable|string',
+            'tax_percentage' => 'nullable|numeric|min:0|max:100',
         ]);
 
         Product::create($request->all());
@@ -55,6 +56,7 @@ class ProductController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
+            'tax_percentage' => 'nullable|numeric|min:0|max:100',
         ]);
 
         $product->update($request->all());

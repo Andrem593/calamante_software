@@ -20,6 +20,7 @@ class ReviewOrderScreen extends StatefulWidget {
   final String? branchEmail;
   final String? paymentMethod;
   final int? creditDays;
+  final bool isDirectInvoice;
   final DateTime? deliveryDate;
 
   const ReviewOrderScreen({
@@ -34,6 +35,7 @@ class ReviewOrderScreen extends StatefulWidget {
     this.branchEmail,
     this.paymentMethod,
     this.creditDays,
+    this.isDirectInvoice = false,
     this.deliveryDate,
   });
 
@@ -44,8 +46,13 @@ class ReviewOrderScreen extends StatefulWidget {
 class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
   bool _submitting = false;
 
-  double get subtotal => widget.items
-      .fold(0, (sum, item) => sum + (item['price'] * item['quantity']));
+  double get subtotal => widget.items.fold(0, (sum, item) {
+        final double price = double.parse(item['price'].toString());
+        final int quantity = int.parse(item['quantity'].toString());
+        final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
+        final double discountedPrice = price * (1 - discount / 100);
+        return sum + (discountedPrice * quantity);
+      });
 
   double get taxes {
     double totalTax = 0;
@@ -60,8 +67,11 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
           taxPercentage: 0,
         ),
       );
-      totalTax +=
-          (item['price'] * item['quantity']) * (product.taxPercentage / 100);
+      final double price = double.parse(item['price'].toString());
+      final int quantity = int.parse(item['quantity'].toString());
+      final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
+      final double discountedPrice = price * (1 - discount / 100);
+      totalTax += (discountedPrice * quantity) * (product.taxPercentage / 100);
     }
     return totalTax;
   }
@@ -128,6 +138,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
         'address': widget.address,
         'payment_method': widget.paymentMethod,
         'credit_days': widget.creditDays,
+        'is_direct_invoice': widget.isDirectInvoice,
         'requested_by_name': _requestedByNameCtrl.text,
         'requested_by_id': _requestedByIdCtrl.text,
         'signature': signatureBase64,
@@ -176,208 +187,251 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
       ),
       body: _submitting
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Productos',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  ...widget.items.map((item) {
-                    final product = widget.products.firstWhere(
-                        (p) => p.id == item['product_id'],
-                        orElse: () => Product(
-                            id: 0, name: 'Desconocido', price: 0, stock: 0));
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+          : SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Productos',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    ...widget.items.map((item) {
+                      final product = widget.products.firstWhere(
+                          (p) => p.id == item['product_id'],
+                          orElse: () => Product(
+                              id: 0, name: 'Desconocido', price: 0, stock: 0));
+                      final double price = double.parse(item['price'].toString());
+                      final int quantity = int.parse(item['quantity'].toString());
+                      final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
+                      final double discountedPrice = price * (1 - discount / 100);
+                      final double itemTotal = discountedPrice * quantity;
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(product.name,
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w500),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis),
+                                  Row(
+                                    children: [
+                                      Text('${item['quantity']} unidades',
+                                          style: const TextStyle(color: Colors.grey)),
+                                      if (discount > 0) ...[
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: Colors.amber[100],
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            '-${discount.toStringAsFixed(1)}%',
+                                            style: TextStyle(
+                                              color: Colors.amber[800],
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 9,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text(product.name,
+                                Text(
+                                    '\$${itemTotal.toStringAsFixed(2)}',
                                     style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis),
-                                Text('${item['quantity']} unidades',
-                                    style: const TextStyle(color: Colors.grey)),
+                                        fontSize: 16, fontWeight: FontWeight.bold)),
+                                if (discount > 0)
+                                  Text(
+                                    '(\$${discountedPrice.toStringAsFixed(2)} c/u)',
+                                    style: const TextStyle(
+                                        color: Colors.grey,
+                                        fontSize: 11),
+                                  ),
                               ],
                             ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                    const Divider(height: 40),
+                    const Text('Detalles del Pedido',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    _buildSummaryRow(
+                        'Subtotal', '\$${subtotal.toStringAsFixed(2)}'),
+                    _buildSummaryRow('IVA', '\$${taxes.toStringAsFixed(2)}'),
+                    _buildSummaryRow('Total', '\$${total.toStringAsFixed(2)}',
+                        isTotal: true),
+                    const Divider(height: 40),
+                    const Text('Ubicación de Entrega',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    Container(
+                      height: 150,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey[200]!),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: GoogleMap(
+                          initialCameraPosition: CameraPosition(
+                            target: LatLng(widget.position?.latitude ?? 0,
+                                widget.position?.longitude ?? 0),
+                            zoom: 15,
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                              '\$${(item['price'] * item['quantity']).toStringAsFixed(2)}',
+                          markers: {
+                            Marker(
+                              markerId: const MarkerId('delivery'),
+                              position: LatLng(widget.position?.latitude ?? 0,
+                                  widget.position?.longitude ?? 0),
+                            ),
+                          },
+                          liteModeEnabled: true,
+                          scrollGesturesEnabled: false,
+                          zoomGesturesEnabled: false,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 25),
+                    const Text('Información del Cliente',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Text(widget.client.name,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w500)),
+                    Text(widget.client.email ?? '',
+                        style: const TextStyle(color: Colors.grey)),
+                    if (widget.branch != null) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.store,
+                              size: 16, color: Colors.lightBlue),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Sucursal: ${widget.branch!.name}',
                               style: const TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.bold)),
+                                  fontSize: 14,
+                                  color: Color(0xFF0277BD),
+                                  fontWeight: FontWeight.w500),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                         ],
                       ),
-                    );
-                  }).toList(),
-                  const Divider(height: 40),
-                  const Text('Detalles del Pedido',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  _buildSummaryRow(
-                      'Subtotal', '\$${subtotal.toStringAsFixed(2)}'),
-                  _buildSummaryRow('IVA', '\$${taxes.toStringAsFixed(2)}'),
-                  _buildSummaryRow('Total', '\$${total.toStringAsFixed(2)}',
-                      isTotal: true),
-                  const Divider(height: 40),
-                  const Text('Ubicación de Entrega',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  Container(
-                    height: 150,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey[200]!),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: GoogleMap(
-                        initialCameraPosition: CameraPosition(
-                          target: LatLng(widget.position?.latitude ?? 0,
-                              widget.position?.longitude ?? 0),
-                          zoom: 15,
+                    ],
+                    if (widget.notes.isNotEmpty) ...[
+                      const SizedBox(height: 15),
+                      const Text('Observaciones:',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text(widget.notes,
+                          style: const TextStyle(fontStyle: FontStyle.italic)),
+                    ],
+                    const Divider(height: 40),
+                    const Text('Datos del Solicitante',
+                        style:
+                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 15),
+                    TextField(
+                      controller: _requestedByNameCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Nombre de quien solicita',
+                        fillColor: const Color(0xFFF1FBFE),
+                        filled: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
                         ),
-                        markers: {
-                          Marker(
-                            markerId: const MarkerId('delivery'),
-                            position: LatLng(widget.position?.latitude ?? 0,
-                                widget.position?.longitude ?? 0),
-                          ),
-                        },
-                        liteModeEnabled: true,
-                        scrollGesturesEnabled: false,
-                        zoomGesturesEnabled: false,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 25),
-                  const Text('Información del Cliente',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  Text(widget.client.name,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w500)),
-                  Text(widget.client.email ?? '',
-                      style: const TextStyle(color: Colors.grey)),
-                  if (widget.branch != null) ...[
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 15),
+                    TextField(
+                      controller: _requestedByIdCtrl,
+                      decoration: InputDecoration(
+                        labelText: 'Número de Identificación',
+                        fillColor: const Color(0xFFF1FBFE),
+                        filled: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 25),
                     Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Icon(Icons.store,
-                            size: 16, color: Colors.lightBlue),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Sucursal: ${widget.branch!.name}',
-                            style: const TextStyle(
-                                fontSize: 14,
-                                color: Color(0xFF0277BD),
-                                fontWeight: FontWeight.w500),
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                        const Text('Firma de Aceptación',
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold)),
+                        TextButton.icon(
+                          onPressed: () => _signatureController.clear(),
+                          icon: const Icon(Icons.clear, color: Colors.red),
+                          label: const Text('Limpiar',
+                              style: TextStyle(color: Colors.red)),
                         ),
                       ],
                     ),
-                  ],
-                  if (widget.notes.isNotEmpty) ...[
-                    const SizedBox(height: 15),
-                    const Text('Observaciones:',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    Text(widget.notes,
-                        style: const TextStyle(fontStyle: FontStyle.italic)),
-                  ],
-                  const Divider(height: 40),
-                  const Text('Datos del Solicitante',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _requestedByNameCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Nombre de quien solicita',
-                      fillColor: const Color(0xFFF1FBFE),
-                      filled: true,
-                      border: OutlineInputBorder(
+                    const SizedBox(height: 10),
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey[300]!),
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-                  TextField(
-                    controller: _requestedByIdCtrl,
-                    decoration: InputDecoration(
-                      labelText: 'Número de Identificación',
-                      fillColor: const Color(0xFFF1FBFE),
-                      filled: true,
-                      border: OutlineInputBorder(
+                      child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
+                        child: Signature(
+                          controller: _signatureController,
+                          height: 150,
+                          backgroundColor: const Color(0xFFF1FBFE),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 25),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Firma de Aceptación',
-                          style: TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                      TextButton.icon(
-                        onPressed: () => _signatureController.clear(),
-                        icon: const Icon(Icons.clear, color: Colors.red),
-                        label: const Text('Limpiar',
-                            style: TextStyle(color: Colors.red)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey[300]!),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Signature(
-                        controller: _signatureController,
-                        height: 150,
-                        backgroundColor: const Color(0xFFF1FBFE),
+                    const SizedBox(height: 40),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 55,
+                      child: ElevatedButton(
+                        onPressed: _confirmOrder,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF03A9F4),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: const Text('Confirmar Pedido',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 40),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 55,
-                    child: ElevatedButton(
-                      onPressed: _confirmOrder,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF03A9F4),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text('Confirmar Pedido',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
     );

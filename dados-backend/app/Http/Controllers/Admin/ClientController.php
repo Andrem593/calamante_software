@@ -94,4 +94,29 @@ class ClientController extends Controller
         Artisan::call('sync:contifico-clients');
         return redirect()->route('admin.clients.index')->with('success', 'Sincronización con Contifico completada.');
     }
+
+    public function searchJson(Request $request)
+    {
+        $query = Client::query();
+        if ($request->search) {
+            $query->where(function ($q) use ($request) {
+                $q->where('name', 'like', "%{$request->search}%")
+                  ->orWhere('nombre_local', 'like', "%{$request->search}%")
+                  ->orWhere('identification', 'like', "%{$request->search}%");
+            });
+        }
+        return response()->json($query->take(20)->get(['id', 'name', 'identification', 'identification_type']));
+    }
+
+    public function merge(Request $request)
+    {
+        $request->validate([
+            'source_client_id' => 'required|exists:clients,id',
+            'target_client_id' => 'required|exists:clients,id|different:source_client_id',
+        ]);
+
+        Client::mergeClients($request->source_client_id, $request->target_client_id);
+
+        return redirect()->route('admin.clients.index')->with('success', 'Clientes fusionados exitosamente.');
+    }
 }

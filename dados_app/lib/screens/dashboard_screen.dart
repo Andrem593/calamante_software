@@ -294,9 +294,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildOrderTile(dynamic order) {
     String status = order['status'] ?? 'pending';
     Color statusColor = Colors.orange;
+    if (status == 'cancelled') statusColor = Colors.red;
     if (status == 'delivered') statusColor = Colors.green;
-    if (status == 'invoiced' || status == 'on_the_way')
-      statusColor = Colors.blue;
+    if (status == 'invoiced' || status == 'on_the_way') statusColor = Colors.blue;
 
     return ListTile(
       onTap: () =>
@@ -322,19 +322,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
               '\$${(double.tryParse(order['total']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2)}',
               style: const TextStyle(fontWeight: FontWeight.bold)),
           Text(
-              order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1
-                  ? 'PREFACTURADO'
-                  : status == 'pending'
-                      ? 'EN PROCESO'
-                      : status == 'delivered'
-                          ? 'ENTREGADO'
-                          : status == 'invoiced'
-                              ? 'FACTURADO'
-                              : status == 'on_the_way'
-                                  ? 'EN CAMINO'
-                                  : status.toUpperCase(),
+              status == 'cancelled'
+                  ? 'ANULADO'
+                  : (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1)
+                      ? 'PREFACTURADO'
+                      : status == 'pending'
+                          ? 'EN PROCESO'
+                          : status == 'delivered'
+                              ? 'ENTREGADO'
+                              : status == 'invoiced'
+                                  ? 'FACTURADO'
+                                  : status == 'on_the_way'
+                                      ? 'EN CAMINO'
+                                      : status.toUpperCase(),
               style: TextStyle(
-                  color: (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1) ? Colors.blue : statusColor,
+                  color: status == 'cancelled'
+                      ? Colors.red
+                      : (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1)
+                          ? Colors.purple
+                          : statusColor,
                   fontSize: 10,
                   fontWeight: FontWeight.bold)),
         ],

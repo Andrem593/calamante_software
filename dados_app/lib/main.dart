@@ -109,6 +109,8 @@ class _MyAppState extends State<MyApp> {
                 notes: args['notes'] ?? '',
                 address: args['address'],
                 paymentMethod: args['payment_method'],
+                creditDays: args['credit_days'],
+                isDirectInvoice: args['is_direct_invoice'] ?? false,
                 deliveryDate: args['delivery_date'],
               ),
             );

@@ -59,4 +59,73 @@ class ReportController extends Controller
             'filters' => $request->only(['from', 'to']),
         ]);
     }
+
+    public function sellers(Request $request)
+    {
+        $from = $request->from ? Carbon::parse($request->from)->startOfDay() : Carbon::now()->startOfMonth()->startOfDay();
+        $to = $request->to ? Carbon::parse($request->to)->endOfDay() : Carbon::now()->endOfDay();
+
+        $sellers = User::orderBy('name')
+            ->get()
+            ->map(function ($seller) use ($from, $to) {
+                $orders = Order::where('user_id', $seller->id)
+                    ->whereBetween('created_at', [$from, $to])
+                    ->where('status', '!=', 'cancelled')
+                    ->get();
+
+                $totalSales = $orders->sum('total');
+                $ordersCount = $orders->count();
+
+                $creditSales = $orders->filter(function ($order) {
+                    $methodLower = strtolower($order->payment_method ?? '');
+                    return str_contains($methodLower, 'cred') || str_contains($methodLower, 'créd');
+                })->sum('total');
+
+                $cashSales = $totalSales - $creditSales;
+
+                $orderIds = $orders->pluck('id');
+                $productBreakdown = \App\Models\OrderItem::with('product')
+                    ->whereIn('order_id', $orderIds)
+                    ->selectRaw('product_id, SUM(quantity) as quantity, SUM(subtotal) as total')
+                    ->groupBy('product_id')
+                    ->get()
+                    ->map(function ($item) {
+                        return [
+                            'product_name' => $item->product ? $item->product->name : 'Producto Eliminado',
+                            'product_sku' => $item->product ? $item->product->sku : 'N/A',
+                            'quantity' => (int)$item->quantity,
+                            'total' => (float)$item->total,
+                        ];
+                    });
+
+                return [
+                    'id' => $seller->id,
+                    'name' => $seller->name,
+                    'email' => $seller->email,
+                    'total_orders' => $ordersCount,
+                    'total_sales' => $totalSales,
+                    'today_cash_sales' => $cashSales,
+                    'today_credit_sales' => $creditSales,
+                    'product_breakdown' => $productBreakdown,
+                ];
+            })
+            ->sortByDesc('total_sales')
+            ->values();
+
+        $summary = [
+            'total' => $sellers->sum('total_sales'),
+            'orders' => $sellers->sum('total_orders'),
+            'cash' => $sellers->sum('today_cash_sales'),
+            'credit' => $sellers->sum('today_credit_sales'),
+        ];
+
+        return Inertia::render('Admin/Reports/Sellers', [
+            'sellers' => $sellers,
+            'summary' => $summary,
+            'filters' => [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+            ],
+        ]);
+    }
 }

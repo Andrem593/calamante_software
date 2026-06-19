@@ -11,19 +11,26 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _emailCtrl = TextEditingController(text: 'vendedor@dados.com');
-  final _passCtrl = TextEditingController(text: 'password');
+  final _emailCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
   final LocalAuthentication auth = LocalAuthentication();
 
   Future<void> _login() async {
-    final success = await context
-        .read<AuthService>()
-        .login(_emailCtrl.text, _passCtrl.text);
+    final authService = context.read<AuthService>();
+    final success = await authService.login(_emailCtrl.text, _passCtrl.text);
     if (success) {
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/dashboard');
+      }
     } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Login falló')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(authService.loginError ?? 'Login falló'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
     }
   }
 

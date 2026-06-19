@@ -8,16 +8,28 @@ class AuthService with ChangeNotifier {
   String? _token;
   String? get token => _token;
 
+  String? _loginError;
+  String? get loginError => _loginError;
+
   Future<bool> login(String email, String password) async {
+    _loginError = null;
     try {
-      final response = await http.post(
-        Uri.parse('${ApiService.baseUrl}/login'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: jsonEncode({'email': email, 'password': password}),
-      );
+      debugPrint('AuthService: Intentando iniciar sesión para $email...');
+      debugPrint('AuthService: URL = ${ApiService.baseUrl}/login');
+      final response = await http
+          .post(
+            Uri.parse('${ApiService.baseUrl}/login'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: jsonEncode({'email': email, 'password': password}),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      debugPrint(
+          'AuthService: Respuesta de la API recibida. Código de estado: ${response.statusCode}');
+      debugPrint('AuthService: Cuerpo de la respuesta: ${response.body}');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -29,10 +41,20 @@ class AuthService with ChangeNotifier {
 
         notifyListeners();
         return true;
+      } else {
+        try {
+          final data = jsonDecode(response.body);
+          _loginError = data['message'] ??
+              'Error de inicio de sesión (${response.statusCode})';
+        } catch (_) {
+          _loginError = 'Error del servidor (${response.statusCode})';
+        }
+        return false;
       }
-      return false;
-    } catch (e) {
-      print(e);
+    } catch (e, stackTrace) {
+      debugPrint('AuthService: Error/Excepción en login: $e');
+      debugPrint('AuthService: StackTrace: $stackTrace');
+      _loginError = 'Error de conexión: $e';
       return false;
     }
   }

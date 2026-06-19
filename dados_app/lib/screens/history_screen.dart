@@ -44,6 +44,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (_filter == 'Completados') {
       return _orders.where((o) => o['status'] == 'delivered').toList();
     }
+    if (_filter == 'Cancelados') {
+      return _orders.where((o) => o['status'] == 'cancelled').toList();
+    }
     if (_filter == 'Entregas Hoy') {
       final now = DateTime.now();
       return _orders.where((o) {
@@ -141,16 +144,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
     String statusLabel = 'En proceso';
     Color statusColor = Colors.orange;
 
-    if (status == 'delivered') {
+    if (status == 'cancelled') {
+      statusLabel = 'Anulado';
+      statusColor = Colors.red;
+    } else if (status == 'delivered') {
       statusLabel = 'Entregado';
       statusColor = Colors.green;
-    } else if (status == 'invoiced') {
+    } else if (status == 'invoiced' || (order['is_invoiced'] == true || order['is_invoiced'] == 1)) {
       statusLabel = 'Facturado';
       statusColor = Colors.blue;
+    } else if (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1) {
+      statusLabel = 'Prefacturado';
+      statusColor = Colors.deepPurple;
     }
 
     // Lógica para "En camino"
-    if (status != 'delivered') {
+    if (status != 'delivered' && status != 'cancelled') {
       final deliveryDateStr = order['delivery_date'];
       if (deliveryDateStr != null) {
         final deliveryDate = DateTime.parse(deliveryDateStr);

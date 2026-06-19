@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "209417550546",
+    "project_id": "app-dados-e52b9",
+    "storage_bucket": "app-dados-e52b9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:209417550546:android:bb79f35d836e815e768b0b",
+        "android_client_info": {
+          "package_name": "com.grupodados.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAbEikkGcQ0nmIzlC_DfbQG8d0uLNcwVyw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

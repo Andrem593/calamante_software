@@ -18,8 +18,12 @@
                             placeholder="Descripción opcional..."></textarea>
                     </FormField>
                     <FormField label="Precio (USD)" :error="form.errors.price">
-                        <input v-model="form.price" type="number" step="0.01" min="0" class="input"
-                            placeholder="0.00" />
+                        <input v-model="form.price" type="number" step="any" min="0" class="input"
+                            placeholder="0.0000" />
+                    </FormField>
+                    <FormField label="Porcentaje de IVA (%)" :error="form.errors.tax_percentage">
+                        <input v-model="form.tax_percentage" type="number" step="any" min="0" max="100" class="input"
+                            placeholder="15.00" />
                     </FormField>
                     <div class="flex justify-end pt-2">
                         <button type="submit" :disabled="form.processing"
@@ -43,6 +47,7 @@ const form = useForm({
     name: props.product?.name ?? '',
     description: props.product?.description ?? '',
     price: props.product?.price ?? '',
+    tax_percentage: props.product?.tax_percentage ?? 15.00,
 });
 
 function submit() {

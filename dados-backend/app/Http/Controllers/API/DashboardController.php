@@ -21,6 +21,7 @@ class DashboardController extends Controller
                 ->count(),
             'month_orders' => Order::where('user_id', $user->id)
                 ->where('created_at', '>=', $startOfMonth)
+                ->where('status', '!=', 'cancelled')
                 ->count(),
             'month_sales' => Order::where('user_id', $user->id)
                 ->where('created_at', '>=', $startOfMonth)

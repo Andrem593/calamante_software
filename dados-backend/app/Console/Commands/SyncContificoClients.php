@@ -52,9 +52,39 @@ class SyncContificoClients extends Command
 
             if (empty($identificacion)) continue;
 
-            $client = Client::updateOrCreate(
-                ['identification' => $identificacion],
-                [
+            // Buscar por contifico_id
+            $client = null;
+            if (!empty($cData['id'])) {
+                $client = Client::where('contifico_id', $cData['id'])->first();
+            }
+
+            // Buscar por identificación
+            $duplicate = Client::where('identification', $identificacion)->first();
+
+            if ($client && $duplicate && $client->id !== $duplicate->id) {
+                // Ambos existen y son diferentes. Fusionamos el antiguo ($client) en el nuevo ($duplicate).
+                $this->line(" - Fusionando duplicado por cambio en identificación: [{$client->identification}] -> [{$duplicate->identification}]");
+                Client::mergeClients($client->id, $duplicate->id);
+                $client = $duplicate;
+            } elseif (!$client && $duplicate) {
+                $client = $duplicate;
+            }
+
+            if ($client) {
+                $client->update([
+                    'identification' => $identificacion,
+                    'name' => $nombre,
+                    'contifico_id' => $cData['id'] ?? $client->contifico_id,
+                    'nombre_local' => $cData['nombre_comercial'] ?? $client->nombre_local,
+                    'company_name' => $cData['nombre_comercial'] ?? $client->company_name,
+                    'email' => $cData['email'] ?? $client->email,
+                    'address' => $cData['direccion'] ?? $client->address,
+                    'phone' => $cData['telefonos'] ?? $client->phone,
+                    'identification_type' => $tipoIdentificacion,
+                ]);
+            } else {
+                $client = Client::create([
+                    'identification' => $identificacion,
                     'name' => $nombre,
                     'contifico_id' => $cData['id'] ?? null,
                     'nombre_local' => $cData['nombre_comercial'] ?? null,
@@ -63,15 +93,12 @@ class SyncContificoClients extends Command
                     'address' => $cData['direccion'] ?? null,
                     'phone' => $cData['telefonos'] ?? null,
                     'identification_type' => $tipoIdentificacion,
-                ]
-            );
-
-            $processed++;
-
-            if ($client->wasRecentlyCreated) {
+                ]);
                 $this->line(" - Nuevo Cliente: [{$client->identification}] {$client->name}");
                 $count++;
             }
+
+            $processed++;
         }
 
         $this->info("Sincronización completada. Se procesaron {$processed} clientes.");

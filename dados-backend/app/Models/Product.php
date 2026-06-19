@@ -12,4 +12,9 @@ class Product extends Model
     {
         return $this->belongsTo(Category::class);
     }
+
+    public function specialPrices()
+    {
+        return $this->hasMany(SpecialPrice::class);
+    }
 }

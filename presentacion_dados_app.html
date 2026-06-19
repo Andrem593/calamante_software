@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presentación Dados App - Capacitación Oficial ❄️</title>
+  <!-- Google Fonts Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --primary: #03a9f4;
+      --primary-dark: #0288d1;
+      --primary-light: #e1f5fe;
+      --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      --card-bg: rgba(255, 255, 255, 0.06);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --success: #10b981;
+      --warning: #f59e0b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-gradient);
+      color: var(--text-main);
+      min-height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    h1, h2, h3, .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 700;
+    }
+
+    /* TOP HEADER */
+    header {
+      padding: 20px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(10px);
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      background: white;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 10px rgba(3, 169, 244, 0.3);
+      font-size: 22px;
+      font-weight: bold;
+      color: var(--primary);
+    }
+
+    .brand-title {
+      font-size: 22px;
+      letter-spacing: -0.5px;
+      background: linear-gradient(to right, #ffffff, #03a9f4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .session-badge {
+      background: rgba(3, 169, 244, 0.15);
+      border: 1px solid rgba(3, 169, 244, 0.3);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #00e5ff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .session-badge::before {
+      content: '';
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #00e5ff;
+      border-radius: 50%;
+      box-shadow: 0 0 8px #00e5ff;
+    }
+
+    /* PRESENTATION CANVAS */
+    .slides-container {
+      position: relative;
+      flex-grow: 1;
+      width: 100vw;
+      height: calc(100vh - 160px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .slide {
+      position: absolute;
+      width: 90%;
+      max-width: 1250px;
+      height: 85%;
+      display: flex;
+      gap: 40px;
+      align-items: center;
+      opacity: 0;
+      transform: scale(0.96) translateY(20px);
+      pointer-events: none;
+      transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+      pointer-events: all;
+    }
+
+    /* SLIDE LAYOUT TYPES */
+    .slide-left {
+      flex: 1;
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+    }
+
+    .slide-right {
+      flex: 1.1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .phone-mockup {
+      width: 260px;
+      height: 530px;
+      background: #000;
+      border-radius: 35px;
+      border: 8px solid #2d3748;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 0 2px rgba(255, 255, 255, 0.1);
+      overflow: hidden;
+      position: relative;
+      background: #fff;
+      transition: transform 0.3s ease;
+    }
+
+    .phone-mockup:hover {
+      transform: translateY(-5px) scale(1.02);
+    }
+
+    .phone-mockup img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .mockup-label {
+      position: absolute;
+      bottom: -30px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    /* SLIDE CONTENTS */
+    .slide-title {
+      font-size: 38px;
+      line-height: 1.1;
+      margin-bottom: 15px;
+      letter-spacing: -1px;
+      color: #fff;
+    }
+
+    .slide-title span {
+      color: var(--primary);
+    }
+
+    .slide-desc {
+      font-size: 16px;
+      color: var(--text-muted);
+      margin-bottom: 25px;
+      line-height: 1.6;
+    }
+
+    .features-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      max-height: 380px;
+      overflow-y: auto;
+      padding-right: 5px;
+    }
+
+    .features-list::-webkit-scrollbar {
+      width: 4px;
+    }
+    .features-list::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+    }
+
+    .feature-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      padding: 14px 16px;
+      border-radius: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .feature-item:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(3, 169, 244, 0.4);
+      transform: translateX(5px);
+    }
+
+    .feature-icon {
+      background: rgba(3, 169, 244, 0.15);
+      color: var(--primary);
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 13px;
+      font-weight: bold;
+    }
+
+    .feature-text h4 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 3px;
+      color: #fff;
+    }
+
+    .feature-text p {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* HOME / PORTADA SPECIFIC */
+    .slide-home {
+      flex-direction: column;
+      text-align: center;
+      justify-content: center;
+      align-items: center;
+      height: 100%;
+    }
+
+    .slide-home .brand-logo-large {
+      background: white;
+      width: 120px;
+      height: 120px;
+      border-radius: 35px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 60px;
+      box-shadow: 0 20px 50px rgba(3, 169, 244, 0.4);
+      margin-bottom: 30px;
+      animation: float 4s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px) rotate(0deg); }
+      50% { transform: translateY(-10px) rotate(3deg); }
+    }
+
+    .slide-home h1 {
+      font-size: 64px;
+      letter-spacing: -2px;
+      margin-bottom: 15px;
+      background: linear-gradient(to bottom, #ffffff, #93c5fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .slide-home h2 {
+      font-size: 24px;
+      color: var(--primary);
+      font-weight: 500;
+      margin-bottom: 25px;
+      letter-spacing: 0.5px;
+    }
+
+    .slide-home p {
+      max-width: 600px;
+      font-size: 16px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* SUMMARY SPECIFIC */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 15px;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+    .summary-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px 16px;
+      text-align: center;
+      transition: all 0.3s ease;
+    }
+
+    .summary-card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 10px 30px rgba(3, 169, 244, 0.1);
+      transform: translateY(-5px);
+    }
+
+    .summary-card-icon {
+      font-size: 32px;
+      margin-bottom: 15px;
+    }
+
+    .summary-card h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .summary-card p {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    /* FOOTER CONTROLS */
+    footer {
+      padding: 20px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      background: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(10px);
+      z-index: 10;
+    }
+
+    .nav-buttons {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .btn-nav {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 12px 24px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s ease;
+      font-size: 14px;
+    }
+
+    .btn-nav:hover:not(:disabled) {
+      background: var(--primary);
+      border-color: var(--primary);
+      box-shadow: 0 4px 15px rgba(3, 169, 244, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .btn-nav:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .dots-indicator {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .dot.active {
+      background: var(--primary);
+      width: 24px;
+      border-radius: 5px;
+      box-shadow: 0 0 10px var(--primary);
+    }
+
+    .instructions-tip {
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .key-badge {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 11px;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">❄️</div>
+      <div>
+        <div class="brand-title">DADOS APP</div>
+      </div>
+    </div>
+    <div class="session-badge">Sesión de Capacitación Oficial</div>
+  </header>
+
+  <!-- SLIDES CANVAS -->
+  <div class="slides-container">
+
+    <!-- SLIDE 1: PORTADA -->
+    <div class="slide slide-home active">
+      <div class="brand-logo-large">❄️</div>
+      <h1>Dados App</h1>
+      <h2>Sistema Móvil de Toma de Pedidos y Facturación</h2>
+      <p>Optimización integral para la distribución de hielo purificado. Capacitación interactiva para el equipo comercial y logístico.</p>
+    </div>
+
+    <!-- SLIDE 2: ACCESO Y LOGIN -->
+    <div class="slide">
+      <div class="slide-left">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/profile.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/login_screen_mockup_1779932633335.png';" alt="Acceso Seguro">
+          <div class="mockup-label">Inicio de Sesión</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Acceso <span>Seguro e Instantáneo</span> 🔐</h2>
+        <p class="slide-desc">Garantizamos una entrada fluida para que los vendedores y repartidores inicien su ruta sin fricciones, resguardando los datos de la compañía.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Autenticación Biométrica Integrada</h4>
+              <p>Inicio de sesión instantáneo con huella dactilar o reconocimiento facial del celular sin necesidad de digitar contraseñas.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Auto-Login Inteligente</h4>
+              <p>Mecanismo interno de alta velocidad que comprueba y restaura automáticamente la sesión anterior en 5 segundos.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Limpieza de Seguridad</h4>
+              <p>Al cerrar sesión de forma manual, la base local se limpia de borradores temporales y credenciales para protección de datos corporativos.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 3: DASHBOARD -->
+    <div class="slide">
+      <div class="slide-left">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/dashboard.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/dashboard_screen_mockup_1779932651793.png';" alt="Dashboard">
+          <div class="mockup-label">Inicio</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Panel de Control <span>En Tiempo Real</span> 📊</h2>
+        <p class="slide-desc">El punto de partida del día. Ofrece información consolidada de ventas y las tareas logísticas prioritarias de ruta.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Indicadores Comerciales del Mes</h4>
+              <p>Control exacto en tiempo real del desempeño: Pedidos "En proceso", volumen del mes y valor acumulado en ventas.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Módulo Especial: Entregas de Hoy 🚚</h4>
+              <p>Tarjeta inteligente con degradé premium que destaca las entregas pendientes de la fecha, con un botón directo para trazar la ruta.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Itinerario Directo</h4>
+              <p>Al pulsar "Ver Detalles" en la tarjeta de entregas de hoy, la app redirige al historial mostrando únicamente los pedidos prioritarios programados.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 4: NUEVO PEDIDO (VISTA DOBLE) -->
+    <div class="slide">
+      <div class="slide-left" style="max-width: 550px;">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/order.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/order_screen_mockup_1779932672190.png';" alt="Nuevo Pedido - Parte 1">
+          <div class="mockup-label">Parte 1: Catálogo</div>
+        </div>
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/order_2.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/order_screen_mockup_1779932672190.png';" alt="Nuevo Pedido - Parte 2">
+          <div class="mockup-label">Parte 2: GPS y Datos</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Toma de Pedidos <span>Inteligente</span> 📝</h2>
+        <p class="slide-desc">Diseñado para ser altamente ágil y resistente a problemas de red. Facilita el registro de ventas estructuradas con precisión de ubicación.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Borrador Automático Resiliente (Auto-Save)</h4>
+              <p>Si la app se cierra o el teléfono se apaga, el pedido se recupera intacto. ¡Garantía de cero pérdidas de información en campo!</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Geolocalización por GPS y Mapa</h4>
+              <p>Captura las coordenadas GPS exactas en el mapa al crear el pedido, validando la visita comercial al cliente de forma transparente.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Categorización y Filtros Dinámicos</h4>
+              <p>Selector rápido para buscar productos por categoría, con cálculos automáticos de Subtotal, IVA (15%) y Total en la barra inferior.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Condiciones y Plazos de Crédito</h4>
+              <p>Dropdown con métodos de pago e ingreso dinámico de días de Crédito (por defecto 30) en caso de calificar.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 5: REVISION Y FIRMA DIGITAL (VISTA DOBLE) -->
+    <div class="slide">
+      <div class="slide-left" style="max-width: 550px;">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/signature.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/signature_screen_mockup_1779932700162.png';" alt="Revisión - Parte 1">
+          <div class="mockup-label">Parte 1: Totales</div>
+        </div>
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/signature_2.png" onerror="this.onerror=null; this.src='/Users/mac/.gemini/antigravity-cli/brain/dcd76b58-ae79-4b81-8a73-fbef3e2ad6b7/signature_screen_mockup_1779932700162.png';" alt="Revisión - Parte 2">
+          <div class="mockup-label">Parte 2: Firma Táctil</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Revisión y <span>Firma Digital</span> ✍️</h2>
+        <p class="slide-desc">Transparencia y validez legal en cada entrega. Asegura la conformidad del cliente antes de reportar la orden al sistema administrativo.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Firma Digital Táctil del Cliente</h4>
+              <p>El cliente firma directamente con su dedo en la pantalla. La firma se digitaliza y se asocia de forma inmutable al pedido en Base64.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Datos Completos del Solicitante</h4>
+              <p>Registro obligatorio del Nombre y Cédula/RUC del responsable físico de recepción para evitar disputas de entrega.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Desglose Contable de Impuestos</h4>
+              <p>Cálculo explícito y transparente de Subtotal, IVA (15%) y Total para conformidad total antes de cerrar la venta.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 6: DETALLE DEL PEDIDO Y ENTREGA (VISTA DOBLE) -->
+    <div class="slide">
+      <div class="slide-left" style="max-width: 550px;">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/history_datail.png" alt="Detalle - Parte 1">
+          <div class="mockup-label">Parte 1: Timeline</div>
+        </div>
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/history_detail_2.png" alt="Detalle - Parte 2">
+          <div class="mockup-label">Parte 2: Despacho</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Detalle del Pedido y <span>Despacho</span> 🚚</h2>
+        <p class="slide-desc">La herramienta de control en ruta para el repartidor. Gestiona el timeline del despacho físico y resguarda la integridad contable.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Timeline de Progreso Visual</h4>
+              <p>Monitorea las fases del pedido: <strong>Recibido ➔ Facturado ➔ En camino (automático si se entrega hoy) ➔ Entregado</strong>.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Visor Seguro de Firma e Identificación</h4>
+              <p>Muestra los datos del solicitante capturados en campo y recupera la firma digitalizada directo del servidor Laravel.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Alerta Inteligente de Facturación 🚨</h4>
+              <p>Si el repartidor presiona "Entregar Pedido" sin registrar que la orden fue previamente facturada (switch "Facturado" inactivo), la app bloquea temporalmente el flujo y advierte al chofer para evitar entregar hielo sin factura.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 7: HISTORIAL DE PEDIDOS -->
+    <div class="slide">
+      <div class="slide-left">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/history.png" alt="Historial">
+          <div class="mockup-label">Historial</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Historial de Pedidos <span>y Filtros</span> 🔍</h2>
+        <p class="slide-desc">Un módulo de consulta y auditoría ágil que permite a los usuarios revisar el estado histórico de todas sus transacciones agendadas.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Filtros Rápidos por Categoría de Estado</h4>
+              <p>Pestañas superiores interactivas para segmentar las órdenes al instante: <strong>Todos, Entregas Hoy, Pendientes, Completados o Cancelados</strong>.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Buscador de Pedidos por Texto</h4>
+              <p>Campo de búsqueda para ubicar pedidos de forma inmediata ingresando el identificador (# ID) del pedido o el nombre específico del cliente.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Badges Informativos de Facturación</h4>
+              <p>Cada tarjeta detalla visiblemente si la orden está en estado "Facturado" o "Prefacturado", simplificando el control contable en ruta.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 8: PERFIL Y SOPORTE -->
+    <div class="slide">
+      <div class="slide-left">
+        <div class="phone-mockup">
+          <img src="assets/images/capturas_reales/my_profile.png" alt="Mi Perfil">
+          <div class="mockup-label">Mi Perfil</div>
+        </div>
+      </div>
+      <div class="slide-right">
+        <h2 class="slide-title">Mi Perfil y <span>Soporte Técnico</span> 👤</h2>
+        <p class="slide-desc">El espacio personal del usuario para revisar su desempeño, gestionar su seguridad e integrarse con el equipo técnico de soporte.</p>
+        <div class="features-list">
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Estadísticas Personales Acumuladas</h4>
+              <p>Auditoría rápida de la productividad mensual del vendedor/repartidor: pedidos asignados, agendados y monto de facturación acumulada.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Soporte Técnico Directo vía WhatsApp 💬</h4>
+              <p>Integración directa mediante un botón de menú que redirige al usuario a WhatsApp del equipo técnico con una plantilla de mensaje lista para soporte de la App Calamante.</p>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">✓</div>
+            <div class="feature-text">
+              <h4>Seguridad y Cierre de Sesión Seguro</h4>
+              <p>Permite el cambio seguro de contraseña mediante un diálogo y un cierre de sesión que destruye localmente tokens de sesión y borradores para protección de datos corporativos.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SLIDE 9: CAPACITACION & RESUMEN -->
+    <div class="slide slide-home">
+      <h1>Resumen de Capacitación</h1>
+      <h2 style="margin-bottom: 30px;">Conceptos clave para asegurar el éxito del uso de la App</h2>
+      
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="summary-card-icon">⚡</div>
+          <h3>Cero Pérdida de Datos</h3>
+          <p>Destaca a los usuarios el funcionamiento del <strong>Borrador Automático</strong>. Les dará una confianza inigualable en campo.</p>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon">📍</div>
+          <h3>Geolocalización GPS</h3>
+          <p>Explica que el GPS valida la ruta del vendedor y garantiza que las entregas se realicen en el punto exacto registrado en el mapa.</p>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon">✍️</div>
+          <h3>Firma y Legalidad</h3>
+          <p>Muestra cómo el cliente firma con el dedo para la conformidad física de la entrega, dando validez legal e instantánea al despacho.</p>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon">🛡️</div>
+          <h3>Control de Cobro y Factura</h3>
+          <p>Enseña el switch de "Facturado" y el aviso que previene entregar productos si el sistema no ha emitido la factura correspondiente.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="instructions-tip">
+      Usa las teclas <span class="key-badge">←</span> y <span class="key-badge">→</span> o los botones de navegación
+    </div>
+    
+    <div class="dots-indicator" id="dotsContainer">
+      <!-- Dots will be generated dynamically -->
+    </div>
+
+    <div class="nav-buttons">
+      <button class="btn-nav" id="btnPrev" disabled>Anterior</button>
+      <button class="btn-nav" id="btnNext">Siguiente</button>
+    </div>
+  </footer>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    const dotsContainer = document.getElementById('dotsContainer');
+    const btnPrev = document.getElementById('btnPrev');
+    const btnNext = document.getElementById('btnNext');
+    let currentSlide = 0;
+
+    // Generate indicator dots
+    slides.forEach((slide, idx) => {
+      const dot = document.createElement('div');
+      dot.classList.add('dot');
+      if (idx === 0) dot.classList.add('active');
+      dot.addEventListener('click', () => goToSlide(idx));
+      dotsContainer.appendChild(dot);
+    });
+
+    const dots = document.querySelectorAll('.dot');
+
+    function updateControls() {
+      btnPrev.disabled = currentSlide === 0;
+      
+      if (currentSlide === slides.length - 1) {
+        btnNext.textContent = "Finalizar";
+      } else {
+        btnNext.textContent = "Siguiente";
+      }
+    }
+
+    function goToSlide(index) {
+      if (index < 0 || index >= slides.length) return;
+      
+      slides[currentSlide].classList.remove('active');
+      dots[currentSlide].classList.remove('active');
+      
+      currentSlide = index;
+      
+      slides[currentSlide].classList.add('active');
+      dots[currentSlide].classList.add('active');
+      
+      updateControls();
+    }
+
+    btnPrev.addEventListener('click', () => {
+      goToSlide(currentSlide - 1);
+    });
+
+    btnNext.addEventListener('click', () => {
+      if (currentSlide === slides.length - 1) {
+        // If last slide, go back to beginning
+        goToSlide(0);
+      } else {
+        goToSlide(currentSlide + 1);
+      }
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') {
+        goToSlide(currentSlide + 1);
+      } else if (e.key === 'ArrowLeft') {
+        goToSlide(currentSlide - 1);
+      }
+    });
+
+    updateControls();
+  </script>
+</body>
+</html>

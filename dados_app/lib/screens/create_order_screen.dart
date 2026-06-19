@@ -27,6 +27,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   List<Branch> _branches = [];
   Branch? _selectedBranch;
   bool _loadingBranches = false;
+  String _branchSearchQuery = '';
 
   // ─── Productos ───────────────────────────────────────────────────────────────
   List<Product> _products = [];
@@ -40,6 +41,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final TextEditingController _branchEmailCtrl = TextEditingController();
   final TextEditingController _creditDaysCtrl = TextEditingController(text: '30');
   String _paymentMethod = 'Efectivo';
+  bool _isDirectInvoice = false;
   DateTime _deliveryDate = DateTime.now().add(const Duration(days: 1));
   Position? _currentPosition;
   bool _loading = false;
@@ -67,8 +69,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   Future<void> _loadInitialData() async {
     debugPrint('CreateOrderScreen: _loadInitialData START');
     await _loadCategories();
-    await _loadProducts();
     await _loadDraft();
+    await _loadProducts(clientId: _selectedClient?.id);
     await _getCurrentLocation();
     debugPrint('CreateOrderScreen: _loadInitialData END');
     if (!mounted) return;
@@ -92,10 +94,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   }
 
   // ── Carga únicamente productos (no clientes)
-  Future<void> _loadProducts() async {
+  Future<void> _loadProducts({int? clientId}) async {
     final api = context.read<ApiService>();
     try {
-      final productsData = await api.get('/products');
+      final String endpoint = clientId != null ? '/products?client_id=$clientId' : '/products';
+      final productsData = await api.get(endpoint);
       if (!mounted) return;
       setState(() {
         _products =
@@ -158,6 +161,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       setState(() {
         _branches = (data as List).map((j) => Branch.fromJson(j)).toList();
       });
+      await _loadProducts(clientId: client.id);
     } catch (e) {
       debugPrint('Error cargando sucursales: $e');
     } finally {
@@ -175,6 +179,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _selectedBranch = null;
     });
     _saveDraft();
+    _loadProducts();
   }
 
   Future<void> _getCurrentLocation() async {
@@ -233,6 +238,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     await prefs.setString('draft_payment_method', _paymentMethod);
     await prefs.setString('draft_branch_email', _branchEmailCtrl.text);
     await prefs.setString('draft_credit_days', _creditDaysCtrl.text);
+    await prefs.setBool('draft_is_direct_invoice', _isDirectInvoice);
     if (_currentPosition != null) {
       await prefs.setDouble('draft_lat', _currentPosition!.latitude);
       await prefs.setDouble('draft_lng', _currentPosition!.longitude);
@@ -270,6 +276,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _branchEmailCtrl.text = prefs.getString('draft_branch_email') ?? '';
       _paymentMethod = prefs.getString('draft_payment_method') ?? 'Efectivo';
       _creditDaysCtrl.text = prefs.getString('draft_credit_days') ?? '30';
+      _isDirectInvoice = prefs.getBool('draft_is_direct_invoice') ?? false;
       
       final lat = prefs.getDouble('draft_lat');
       final lng = prefs.getDouble('draft_lng');
@@ -304,6 +311,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         'product_id': product.id,
         'quantity': e.value,
         'price': product.price,
+        'discount_percentage': product.discountPercentage,
       };
     }).toList();
 
@@ -325,6 +333,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'branch_email': _branchEmailCtrl.text,
       'payment_method': _paymentMethod,
       'credit_days': int.tryParse(_creditDaysCtrl.text) ?? 30,
+      'is_direct_invoice': _isDirectInvoice,
       'delivery_date': _deliveryDate,
     });
   }
@@ -465,8 +474,54 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             title: Text(product.name,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
-                            subtitle: Text(
-                                '\$${product.price} - Stock: ${product.stock}'),
+                            subtitle: product.discountPercentage > 0
+                                ? Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '\$${product.price.toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              decoration: TextDecoration.lineThrough,
+                                              color: Colors.grey,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            '\$${(product.price * (1 - product.discountPercentage / 100)).toStringAsFixed(2)}',
+                                            style: const TextStyle(
+                                              color: Colors.lightBlue,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                            decoration: BoxDecoration(
+                                              color: Colors.amber[100],
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              '-${product.discountPercentage.toStringAsFixed(1)}%',
+                                              style: TextStyle(
+                                                color: Colors.amber[800],
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 9,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text('Stock: ${product.stock}', style: const TextStyle(fontSize: 12)),
+                                    ],
+                                  )
+                                : Text(
+                                    '\$${product.price.toStringAsFixed(2)} - Stock: ${product.stock}'),
                             trailing: _buildQuantitySelector(product, qty),
                           ),
                         );
@@ -501,6 +556,22 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             .toList(),
                         onChanged: (v) {
                           setState(() => _paymentMethod = v!);
+                          _saveDraft();
+                        },
+                      ),
+
+                      const SizedBox(height: 10),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Factura Directa',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        subtitle: const Text(
+                            'Genera factura directa en lugar de prefactura'),
+                        value: _isDirectInvoice,
+                        activeColor: Colors.lightBlue,
+                        onChanged: (bool value) {
+                          setState(() => _isDirectInvoice = value);
                           _saveDraft();
                         },
                       ),
@@ -679,70 +750,73 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           offset: const Offset(0, -5))
                     ],
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Subtotal:',
-                              style: TextStyle(color: Colors.grey)),
-                          Text('\$${_calculateSubtotal().toStringAsFixed(2)}',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('IVA:',
-                              style: TextStyle(color: Colors.grey)),
-                          Text('\$${_calculateIVA().toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green)),
-                        ],
-                      ),
-                      const Divider(height: 20),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text('TOTAL',
+                  child: SafeArea(
+                    top: false,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('Subtotal:',
+                                style: TextStyle(color: Colors.grey)),
+                            Text('\$${_calculateSubtotal().toStringAsFixed(2)}',
+                                style:
+                                    const TextStyle(fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text('IVA:',
+                                style: TextStyle(color: Colors.grey)),
+                            Text('\$${_calculateIVA().toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.green)),
+                          ],
+                        ),
+                        const Divider(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('TOTAL',
+                                      style: TextStyle(
+                                          fontSize: 12, color: Colors.grey)),
+                                  Text(
+                                      '\$${(_calculateSubtotal() + _calculateIVA()).toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.lightBlue)),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton(
+                              onPressed: _goToReview,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF03A9F4),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 40, vertical: 15),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                              ),
+                              child: const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text('Revisar Pedido',
                                     style: TextStyle(
-                                        fontSize: 12, color: Colors.grey)),
-                                Text(
-                                    '\$${(_calculateSubtotal() + _calculateIVA()).toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.lightBlue)),
-                              ],
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold)),
+                              ),
                             ),
-                          ),
-                          ElevatedButton(
-                            onPressed: _goToReview,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF03A9F4),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 40, vertical: 15),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            child: const FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text('Revisar Pedido',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold)),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -882,6 +956,122 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     );
   }
 
+  void _showBranchSearchDialog() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.7,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (_, controller) {
+            return StatefulBuilder(
+              builder: (BuildContext context, StateSetter setModalState) {
+                final filtered = _branches
+                    .where((b) => b.name
+                        .toLowerCase()
+                        .contains(_branchSearchQuery.toLowerCase()))
+                    .toList();
+
+                return Container(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 10),
+                      Container(
+                        width: 50,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+                      const Text(
+                        'Seleccionar Sucursal',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: TextField(
+                          decoration: InputDecoration(
+                            hintText: 'Buscar sucursal...',
+                            prefixIcon: const Icon(Icons.search, color: Colors.lightBlue),
+                            fillColor: const Color(0xFFF1FBFE),
+                            filled: true,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
+                          onChanged: (value) {
+                            setModalState(() {
+                              _branchSearchQuery = value;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: ListView(
+                          controller: controller,
+                          children: [
+                            ListTile(
+                              leading: const Icon(Icons.store_mall_directory_outlined, color: Colors.grey),
+                              title: const Text('Sin sucursal específica', style: TextStyle(color: Colors.grey)),
+                              onTap: () {
+                                setState(() {
+                                  _selectedBranch = null;
+                                  _branchEmailCtrl.clear();
+                                });
+                                _saveDraft();
+                                Navigator.pop(context);
+                              },
+                            ),
+                            ...filtered.map((b) {
+                              return ListTile(
+                                leading: const Icon(Icons.store, color: Colors.lightBlue),
+                                title: Text(b.name),
+                                subtitle: Text(b.address ?? 'Sin dirección'),
+                                selected: _selectedBranch?.id == b.id,
+                                onTap: () {
+                                  setState(() {
+                                    _selectedBranch = b;
+                                    if (b.email != null && b.email!.isNotEmpty) {
+                                      _branchEmailCtrl.text = b.email!;
+                                    }
+                                  });
+                                  _saveDraft();
+                                  Navigator.pop(context);
+                                },
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildBranchSelector() {
     if (_loadingBranches) {
       return const Padding(
@@ -910,41 +1100,41 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           const Text('Sucursal',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
-          DropdownButtonFormField<Branch>(
-            isExpanded: true,
-            decoration: InputDecoration(
-              fillColor: const Color(0xFFF1FBFE),
-              filled: true,
-              prefixIcon: const Icon(Icons.store, color: Colors.lightBlue),
-              hintText: 'Seleccionar sucursal (opcional)',
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none),
-            ),
-            value: _selectedBranch,
-            items: [
-              const DropdownMenuItem<Branch>(
-                value: null,
-                child: Text('Sin sucursal específica',
-                    style: TextStyle(color: Colors.grey),
-                    overflow: TextOverflow.ellipsis),
-              ),
-              ..._branches.map((b) => DropdownMenuItem<Branch>(
-                    value: b,
-                    child: Text(b.name, overflow: TextOverflow.ellipsis),
-                  )),
-            ],
-            onChanged: (Branch? newValue) {
+          InkWell(
+            onTap: () {
               setState(() {
-                _selectedBranch = newValue;
-                if (newValue != null &&
-                    newValue.email != null &&
-                    newValue.email!.isNotEmpty) {
-                  _branchEmailCtrl.text = newValue.email!;
-                }
+                _branchSearchQuery = '';
               });
-              _saveDraft();
+              _showBranchSearchDialog();
             },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1FBFE),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.store, color: Colors.lightBlue),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _selectedBranch != null
+                          ? _selectedBranch!.name
+                          : 'Sin sucursal específica',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: _selectedBranch != null
+                            ? Colors.black87
+                            : Colors.grey,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -956,7 +1146,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     _cart.forEach((productId, qty) {
       if (qty > 0) {
         final product = _products.firstWhere((p) => p.id == productId);
-        subtotal += product.price * qty;
+        final double discountedPrice = product.price * (1 - product.discountPercentage / 100);
+        subtotal += discountedPrice * qty;
       }
     });
     return subtotal;
@@ -967,7 +1158,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     _cart.forEach((productId, qty) {
       if (qty > 0) {
         final product = _products.firstWhere((p) => p.id == productId);
-        iva += (product.price * qty) * (product.taxPercentage / 100);
+        final double discountedPrice = product.price * (1 - product.discountPercentage / 100);
+        iva += (discountedPrice * qty) * (product.taxPercentage / 100);
       }
     });
     return iva;

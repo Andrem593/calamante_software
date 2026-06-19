@@ -25,6 +25,7 @@
 
                 <p class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mt-5 mb-2">Gestión</p>
                 <NavItem :href="route('admin.clients.index')" icon="users" label="Clientes y Sucursales" />
+                <NavItem :href="route('admin.special-prices.index')" icon="tag" label="Precios Especiales" />
                 <NavItem :href="route('admin.products.index')" icon="cube" label="Productos" />
                 <NavItem :href="route('admin.users.index')" icon="user-group" label="Usuarios" />
                 <NavItem v-if="$page.props.auth?.user?.role === 'superadmin'" :href="route('admin.settings.index')"
@@ -33,6 +34,7 @@
                 <p class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mt-5 mb-2">Reportes</p>
                 <NavItem :href="route('admin.reports.index')" icon="trending-up" label="Resumen" />
                 <NavItem :href="route('admin.reports.sales')" icon="currency-dollar" label="Ventas" />
+                <NavItem :href="route('admin.reports.sellers')" icon="user-group" label="Vendedores" />
             </nav>
 
             <!-- User section -->

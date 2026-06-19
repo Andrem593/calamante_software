@@ -122,11 +122,18 @@
                 class="px-6 py-4 border-t border-slate-50 flex items-center justify-between text-sm text-slate-500">
                 <span>Mostrando {{ products.from }}–{{ products.to }} de {{ products.total }}</span>
                 <div class="flex gap-1">
-                    <Link v-for="link in products.links" :key="link.label" :href="link.url ?? '#'"
-                        class="px-3 py-1.5 rounded-lg transition text-xs"
-                        :class="link.active ? 'bg-cyan-500 text-white' : 'hover:bg-slate-100 text-slate-600'">
-                        <span v-html="link.label"></span>
-                    </Link>
+                    <template v-for="(link, index) in products.links" :key="index">
+                        <span v-if="link.url === null"
+                            class="px-3 py-1.5 rounded-lg text-slate-400 cursor-not-allowed select-none text-xs"
+                            v-html="link.label">
+                        </span>
+                        <Link v-else
+                            :href="link.url"
+                            class="px-3 py-1.5 rounded-lg transition text-xs"
+                            :class="link.active ? 'bg-cyan-500 text-white font-medium' : 'hover:bg-slate-100 text-slate-600'"
+                            v-html="link.label">
+                        </Link>
+                    </template>
                 </div>
             </div>
         </div>

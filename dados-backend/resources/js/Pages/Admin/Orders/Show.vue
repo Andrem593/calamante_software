@@ -10,6 +10,54 @@
                     Volver a la lista
                 </Link>
                 <div class="flex gap-3">
+                    <button v-if="order.status !== 'delivered' && order.status !== 'cancelled'" 
+                        @click="showDeliverModal = true"
+                        class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-emerald-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Confirmar Entrega
+                    </button>
+                    <Link v-if="order.status !== 'delivered' && order.status !== 'cancelled' && !order.is_invoiced" 
+                        :href="route('admin.orders.edit', order.id)"
+                        class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-blue-200">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                        Editar Pedido
+                    </Link>
+                    <button v-if="order.status !== 'cancelled'" @click="syncWithContifico" :disabled="syncing"
+                        class="flex items-center gap-2 px-4 py-2 text-white rounded-xl text-sm font-medium transition shadow-lg"
+                        :class="order.is_preinvoiced || order.contifico_id ? 'bg-slate-600 hover:bg-slate-700 shadow-slate-200' : 'bg-cyan-600 hover:bg-cyan-700 shadow-cyan-200'">
+                        <svg v-if="syncing" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.23" />
+                        </svg>
+                        {{ syncing ? 'Sincronizando...' : (order.is_preinvoiced || order.contifico_id ? 'Re-sincronizar Contifico' : 'Sincronizar Contifico') }}
+                    </button>
+                    <button v-if="order.status !== 'cancelled' && order.contifico_id && order.is_invoiced" 
+                        @click="showAuthorizeModal = true" :disabled="authorizing"
+                        class="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-amber-200">
+                        <svg v-if="authorizing" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                        {{ authorizing ? 'Autorizando...' : 'Autorizar SRI' }}
+                    </button>
+                    <button v-if="order.status !== 'cancelled'" 
+                        @click="showCancelModal = true"
+                        class="flex items-center gap-2 px-4 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-sm font-semibold transition border border-rose-200 shadow-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                        </svg>
+                        Anular Pedido
+                    </button>
                     <a :href="route('admin.orders.export-pdf', order.id)" target="_blank"
                         class="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-red-200">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -34,8 +82,31 @@
                     <div>
                         <p class="text-cyan-400 font-bold uppercase tracking-widest text-xs mb-2">Comprobante de Pedido</p>
                         <h2 class="text-3xl font-extrabold">Pedido #{{ order.id }}</h2>
-                        <div class="mt-4 flex items-center gap-4">
+                        <div class="mt-4 flex flex-wrap items-center gap-3">
                             <StatusBadge :status="order.status" />
+                            <span v-if="order.is_invoiced"
+                                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                                Factura
+                            </span>
+                            <span v-else
+                                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                Prefactura
+                            </span>
+                            <span v-if="order.status !== 'cancelled' && (order.is_preinvoiced || order.contifico_id)" 
+                                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                Contifico: Sincronizado ({{ order.contifico_id ?? 'N/A' }})
+                                <span v-if="contifico_status" class="ml-1.5 pl-1.5 border-l border-emerald-500/30">
+                                    Estado SRI: {{ contifico_status }}
+                                </span>
+                            </span>
+                            <span v-else-if="order.status !== 'cancelled'" 
+                                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                                Contifico: Pendiente
+                            </span>
+                            <span v-else 
+                                  class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-500/20 text-slate-400 border border-slate-500/30">
+                                Contifico: Bloqueado (Anulado)
+                            </span>
                             <span class="text-slate-400 text-sm">Fecha: {{ formatDate(order.created_at) }}</span>
                         </div>
                     </div>
@@ -145,18 +216,185 @@
                     <p class="text-slate-400 text-xs font-medium">Este es un documento generado por el sistema de gestión DADOS. Gracias por su preferencia.</p>
                 </div>
             </div>
+
+            <!-- Modern Confirmation Modal -->
+            <div v-if="showCancelModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 transform transition-all duration-300 scale-100">
+                    <div class="flex items-center gap-4 mb-4 text-red-600">
+                        <div class="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Anular Pedido #{{ order.id }}</h3>
+                            <p class="text-sm text-slate-500">Esta acción es irreversible.</p>
+                        </div>
+                    </div>
+                    
+                    <p class="text-sm text-slate-600 mb-6 leading-relaxed">
+                        ¿Está seguro de que desea anular este pedido? Una vez anulado, no contará para las estadísticas de ventas y se bloqueará toda sincronización posterior con Contifico.
+                    </p>
+
+                    <div class="flex justify-end gap-3">
+                        <button @click="showCancelModal = false" :disabled="cancelling"
+                            class="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">
+                            Cancelar
+                        </button>
+                        <button @click="cancelOrder" :disabled="cancelling"
+                            class="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition shadow-lg shadow-red-200">
+                            <svg v-if="cancelling" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {{ cancelling ? 'Anulando...' : 'Confirmar Anulación' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SRI Authorization Confirmation Modal -->
+            <div v-if="showAuthorizeModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 transform transition-all duration-300 scale-100">
+                    <div class="flex items-center gap-4 mb-4 text-amber-500">
+                        <div class="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Autorizar SRI</h3>
+                            <p class="text-sm text-slate-500">Enviar documento a autorizar</p>
+                        </div>
+                    </div>
+                    
+                    <p class="text-sm text-slate-600 mb-6 leading-relaxed">
+                        ¿Está seguro de que desea enviar este documento a autorizar al SRI a través de Contifico? Esta acción procesará el comprobante electrónico ante el servicio de rentas internas.
+                    </p>
+
+                    <div class="flex justify-end gap-3">
+                        <button @click="showAuthorizeModal = false" :disabled="authorizing"
+                            class="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">
+                            Cancelar
+                        </button>
+                        <button @click="authorizeSri" :disabled="authorizing"
+                            class="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-semibold transition shadow-lg shadow-amber-200">
+                            <svg v-if="authorizing" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {{ authorizing ? 'Enviando...' : 'Confirmar Envío' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Delivery Confirmation Modal -->
+            <div v-if="showDeliverModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 transform transition-all duration-300 scale-100">
+                    <div class="flex items-center gap-4 mb-4 text-emerald-600">
+                        <div class="w-12 h-12 rounded-full bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-bold text-slate-900">Confirmar Entrega</h3>
+                            <p class="text-sm text-slate-500">Marcar pedido como entregado</p>
+                        </div>
+                    </div>
+                    
+                    <p class="text-sm text-slate-600 mb-6 leading-relaxed">
+                        ¿Está seguro de que desea marcar este pedido como entregado? Se registrará la entrega del producto y se actualizará el estado del pedido.
+                    </p>
+
+                    <div class="flex justify-end gap-3">
+                        <button @click="showDeliverModal = false" :disabled="delivering"
+                            class="px-4 py-2 border border-slate-200 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition">
+                            Cancelar
+                        </button>
+                        <button @click="deliverOrder" :disabled="delivering"
+                            class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition shadow-lg shadow-emerald-200">
+                            <svg v-if="delivering" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            {{ delivering ? 'Procesando...' : 'Confirmar Entrega' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </AdminLayout>
 </template>
 
 <script setup>
-import { Link } from '@inertiajs/vue3';
+import { ref } from 'vue';
+import { Link, router } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import StatusBadge from '@/Components/StatusBadge.vue';
 
 const props = defineProps({
-    order: Object
+    order: Object,
+    contifico_status: String
 });
+
+const syncing = ref(false);
+const cancelling = ref(false);
+const authorizing = ref(false);
+const showCancelModal = ref(false);
+const showAuthorizeModal = ref(false);
+const showDeliverModal = ref(false);
+const delivering = ref(false);
+
+function syncWithContifico() {
+    if (syncing.value) return;
+    syncing.value = true;
+    router.post(route('admin.orders.sync-contifico', props.order.id), {}, {
+        onFinish: () => {
+            syncing.value = false;
+        }
+    });
+}
+
+function authorizeSri() {
+    if (authorizing.value) return;
+    authorizing.value = true;
+    router.post(route('admin.orders.authorize-sri', props.order.id), {}, {
+        onSuccess: () => {
+            showAuthorizeModal.value = false;
+        },
+        onFinish: () => {
+            authorizing.value = false;
+        }
+    });
+}
+
+function cancelOrder() {
+    if (cancelling.value) return;
+    cancelling.value = true;
+    router.post(route('admin.orders.cancel', props.order.id), {}, {
+        onSuccess: () => {
+            showCancelModal.value = false;
+        },
+        onFinish: () => {
+            cancelling.value = false;
+        }
+    });
+}
+
+function deliverOrder() {
+    if (delivering.value) return;
+    delivering.value = true;
+    router.post(route('admin.orders.deliver', props.order.id), {}, {
+        onSuccess: () => {
+            showDeliverModal.value = false;
+        },
+        onFinish: () => {
+            delivering.value = false;
+        }
+    });
+}
 
 function formatDate(date) {
     if (!date) return '—';

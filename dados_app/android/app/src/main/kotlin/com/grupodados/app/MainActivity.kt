@@ -1,4 +1,4 @@
-package com.example.dados_app
+package com.grupodados.app
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

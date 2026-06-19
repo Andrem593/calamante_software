@@ -1,5 +1,27 @@
 <template>
     <AdminLayout title="Mapa de Entregas">
+        <!-- Filters -->
+        <div class="flex flex-wrap gap-3 mb-6 items-center">
+            <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-500 font-medium">Desde:</span>
+                <input type="date" v-model="filters.from" @change="applyFilters"
+                    class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-white" />
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-xs text-slate-500 font-medium">Hasta:</span>
+                <input type="date" v-model="filters.to" @change="applyFilters"
+                    class="border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 bg-white" />
+            </div>
+            
+            <Link :href="route('admin.orders.index')"
+                class="ml-auto flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-sm font-medium transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                Ver Lista
+            </Link>
+        </div>
+
         <!-- Legend -->
         <div class="mb-4 flex items-center gap-3 text-sm">
             <div class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-400 inline-block"></span>
@@ -49,23 +71,38 @@
                     </svg>
                 </div>
             </div>
-            <div v-if="!orders.length" class="col-span-3 text-center text-slate-400 text-sm py-8">Sin entregas para hoy
+            <div v-if="!orders.length" class="col-span-3 text-center text-slate-400 text-sm py-8">Sin entregas para el rango seleccionado
             </div>
         </div>
     </AdminLayout>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, reactive, watch } from 'vue';
+import { Link, router } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
-const props = defineProps({ orders: Array });
+const props = defineProps({ orders: Array, filters: Object });
 
 const selectedId = ref(null);
 
-// map and markers registry: { [orderId]: { marker, infowindow } }
+// map and markers registry: { [orderId]: { marker, group, sharedInfo } }
 const markerRegistry = {};
 let mapInstance = null;
+let sharedInfo = null;
+
+const filters = reactive({
+    from: props.filters?.from ?? '',
+    to: props.filters?.to ?? '',
+});
+
+watch(() => props.filters, (newFilters) => {
+    Object.assign(filters, newFilters);
+}, { deep: true });
+
+function applyFilters() {
+    router.get(route('admin.orders.map'), filters, { preserveState: true, replace: true });
+}
 
 const statusColors = {
     pending: '#FBBF24',
@@ -84,6 +121,20 @@ onMounted(() => {
         script.async = true;
         window.initGMap = initMap;
         document.head.appendChild(script);
+    }
+
+    // Global focus order callback for InfoWindow custom clicks
+    window.focusSingleOrder = (orderId) => {
+        const order = props.orders.find(o => o.id === orderId);
+        if (order) {
+            focusOrder(order);
+        }
+    };
+});
+
+onUnmounted(() => {
+    if (window.focusSingleOrder) {
+        delete window.focusSingleOrder;
     }
 });
 
@@ -105,12 +156,59 @@ function initMap() {
         ],
     });
 
-    // One shared infowindow (closes previous on open)
-    const sharedInfo = new google.maps.InfoWindow();
+    drawMarkers();
+}
 
-    props.orders.forEach(order => {
-        if (!order.lat || !order.lng) return;
+function clearMarkers() {
+    for (const id in markerRegistry) {
+        if (markerRegistry[id].marker) {
+            markerRegistry[id].marker.setMap(null);
+        }
+    }
+    // Empty registry
+    for (const key in markerRegistry) {
+        delete markerRegistry[key];
+    }
+}
 
+// Distance helper (Haversine)
+function getDistanceInMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // metres
+    const phi1 = lat1 * Math.PI/180;
+    const phi2 = lat2 * Math.PI/180;
+    const deltaPhi = (lat2-lat1) * Math.PI/180;
+    const deltaLambda = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(deltaPhi/2) * Math.sin(deltaPhi/2) +
+              Math.cos(phi1) * Math.cos(phi2) *
+              Math.sin(deltaLambda/2) * Math.sin(deltaLambda/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // in metres
+}
+
+function drawMarkers() {
+    if (!mapInstance) return;
+
+    if (!sharedInfo && typeof google !== 'undefined') {
+        sharedInfo = new google.maps.InfoWindow();
+    }
+
+    const ordersWithCoords = props.orders.filter(o => o.lat && o.lng);
+
+    if (ordersWithCoords.length) {
+        const bounds = new google.maps.LatLngBounds();
+        ordersWithCoords.forEach(order => {
+            bounds.extend({ lat: parseFloat(order.lat), lng: parseFloat(order.lng) });
+        });
+        mapInstance.fitBounds(bounds);
+        if (ordersWithCoords.length === 1) {
+            mapInstance.setZoom(14);
+        }
+    }
+
+    // Draw individual markers for each order
+    ordersWithCoords.forEach(order => {
         const position = { lat: parseFloat(order.lat), lng: parseFloat(order.lng) };
 
         const marker = new google.maps.Marker({
@@ -127,17 +225,34 @@ function initMap() {
             },
         });
 
-        const content = buildInfoContent(order);
+        // Register in registry
+        markerRegistry[order.id] = {
+            marker,
+            order,
+            sharedInfo
+        };
 
         marker.addListener('click', () => {
+            // Find all orders within 100 meters of this order
+            const closeOrders = ordersWithCoords.filter(other => {
+                return getDistanceInMeters(
+                    parseFloat(order.lat), parseFloat(order.lng),
+                    parseFloat(other.lat), parseFloat(other.lng)
+                ) <= 100;
+            });
+
+            const content = buildGroupInfoContent({ orders: closeOrders }, order.id);
             sharedInfo.setContent(content);
             sharedInfo.open(mapInstance, marker);
             selectedId.value = order.id;
         });
-
-        markerRegistry[order.id] = { marker, content, sharedInfo };
     });
 }
+
+watch(() => props.orders, () => {
+    clearMarkers();
+    drawMarkers();
+}, { deep: true });
 
 function focusOrder(order) {
     if (!order.lat || !order.lng) return; // no coords, ignore
@@ -169,29 +284,54 @@ function focusOrder(order) {
     // Pan and zoom to marker, then open info
     mapInstance.panTo(entry.marker.getPosition());
     mapInstance.setZoom(16);
-    entry.sharedInfo.setContent(entry.content);
+
+    // Find all orders within 100 meters of this order's coordinates
+    const ordersWithCoords = props.orders.filter(o => o.lat && o.lng);
+    const closeOrders = ordersWithCoords.filter(other => {
+        return getDistanceInMeters(
+            parseFloat(order.lat), parseFloat(order.lng),
+            parseFloat(other.lat), parseFloat(other.lng)
+        ) <= 100;
+    });
+
+    const content = buildGroupInfoContent({ orders: closeOrders }, order.id);
+    entry.sharedInfo.setContent(content);
     entry.sharedInfo.open(mapInstance, entry.marker);
 }
 
-function buildInfoContent(order) {
-    const statusLabel = {
-        pending: 'En Proceso',
-        invoiced: 'Facturado',
-        on_the_way: 'En Camino',
-        delivered: 'Entregado',
-        cancelled: 'Cancelado',
-    }[order.status] ?? order.status;
+function buildGroupInfoContent(group, activeOrderId = null) {
+    let html = `<div style="font-family:Inter,sans-serif;padding:8px;max-height:280px;overflow-y:auto;min-width:280px">
+        <h4 style="font-weight:800;margin:0 0 8px;font-size:13px;color:#1e293b;border-bottom:1px solid #e2e8f0;padding-bottom:6px">
+            ${group.orders.length === 1 ? '1 Pedido en este sector' : `${group.orders.length} Pedidos en este sector (radio 100m)`}
+        </h4>
+        <div style="display:flex;flex-direction:column;gap:8px">`;
 
-    const color = statusColors[order.status] ?? '#6B7280';
+    group.orders.forEach(order => {
+        const statusLabel = {
+            pending: 'En Proceso',
+            invoiced: 'Facturado',
+            on_the_way: 'En Camino',
+            delivered: 'Entregado',
+            cancelled: 'Cancelado',
+        }[order.status] ?? order.status;
+        const color = statusColors[order.status] ?? '#6B7280';
+        const isCurrent = order.id === activeOrderId;
+        const borderStyle = isCurrent ? '2px solid #22d3ee' : '1px solid #e2e8f0';
+        const bgStyle = isCurrent ? '#ecfeff' : '#ffffff';
 
-    return `<div style="font-family:Inter,sans-serif;padding:6px 4px;min-width:180px">
-        <p style="font-weight:700;margin:0 0 2px;font-size:13px">#${order.id} — ${order.client ?? ''}</p>
-        <p style="color:#9ca3af;font-size:11px;margin:0 0 2px">${order.branch ?? ''}</p>
-        <p style="color:#6b7280;font-size:11px;margin:0 0 6px">Vendedor: ${order.seller ?? '—'}</p>
-        <div style="display:flex;align-items:center;justify-content:space-between">
-            <span style="font-weight:700;color:#0e7490;font-size:13px">$${Number(order.total).toFixed(2)}</span>
-            <span style="font-size:10px;padding:2px 8px;border-radius:9999px;background:${color}22;color:${color};font-weight:600">${statusLabel}</span>
-        </div>
-    </div>`;
+        html += `
+        <div style="padding:8px;border-radius:10px;background:${bgStyle};border:${borderStyle};box-shadow: 0 1px 2px rgba(0,0,0,0.02);cursor:pointer;transition: all 0.2s" onclick="window.focusSingleOrder(${order.id})">
+            <p style="font-weight:700;margin:0 0 2px;font-size:12px;color:#0f172a">#${order.id} — ${order.client ?? ''}</p>
+            <p style="color:#64748b;font-size:10px;margin:0 0 2px">${order.branch ?? ''}</p>
+            <p style="color:#6b7280;font-size:10px;margin:0 0 6px">Vendedor: ${order.seller ?? '—'}</p>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+                <span style="font-weight:800;color:#0891b2;font-size:12px">$${Number(order.total).toFixed(2)}</span>
+                <span style="font-size:9px;padding:2px 8px;border-radius:9999px;background:${color}15;color:${color};font-weight:600">${statusLabel}</span>
+            </div>
+        </div>`;
+    });
+
+    html += `</div></div>`;
+    return html;
 }
 </script>

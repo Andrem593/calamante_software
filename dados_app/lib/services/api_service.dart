@@ -4,16 +4,15 @@ import 'package:flutter/foundation.dart';
 
 class ApiService {
   final String? token;
+  // Permite sobreescribir la URL por consola al compilar usando: --dart-define=API_URL=https://tu-url.com/api
+  static const String _envApiUrl = String.fromEnvironment('API_URL');
+
   // Use 10.0.2.2 for Android Emulator, localhost for iOS simulator/Web
   static String get baseUrl {
-    if (kIsWeb) {
-      return 'http://localhost:8000/api';
+    if (_envApiUrl.isNotEmpty) {
+      return _envApiUrl;
     }
-    // Para un dispositivo físico o emulador (si ambos están en la misma red), usamos la IP local de la PC
-    if (defaultTargetPlatform == TargetPlatform.android) {
-      return 'http://192.168.100.217:8000/api'; // Cambiado de 10.0.2.2 a la IP real
-    }
-    return 'http://192.168.100.217:8000/api';
+    return 'https://app.grupo-dados.com/api';
   }
 
   ApiService(this.token);
