@@ -47,7 +47,45 @@
                         <FormField label="Dirección">
                             <input v-model="form.address" type="text" class="input" placeholder="Av. Principal..." />
                         </FormField>
-                        <div class="flex justify-end pt-2">
+                        <div class="grid grid-cols-2 gap-4">
+                            <FormField label="Monto Crédito ($)" :error="form.errors.credit_limit">
+                                <input v-model="form.credit_limit" type="number" step="0.01" min="0" class="input" placeholder="0.00" />
+                            </FormField>
+                            <FormField label="Días Crédito" :error="form.errors.credit_days">
+                                <input v-model="form.credit_days" type="number" min="0" class="input" placeholder="0" />
+                            </FormField>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <FormField label="Estado del Cliente" :error="form.errors.is_active">
+                                <select v-model="form.is_active" class="input">
+                                    <option :value="true">ACTIVO</option>
+                                    <option :value="false">INACTIVO</option>
+                                </select>
+                            </FormField>
+                            <FormField label="Vendedor Asignado" :error="form.errors.vendedor_nombre">
+                                <input v-model="form.vendedor_nombre" type="text" class="input" placeholder="Nombre del vendedor..." />
+                            </FormField>
+                        </div>
+                        <FormField label="ID Vendedor Contifico (Opcional)" :error="form.errors.vendedor_id">
+                            <input v-model="form.vendedor_id" type="text" class="input font-mono text-xs" placeholder="ID de vendedor Contifico (ej: gDGe72jX2sAO0dn2)" />
+                        </FormField>
+                        <!-- Equipos del Cliente -->
+                        <div v-if="equipments && equipments.length" class="border-t border-slate-100 pt-5 mt-5">
+                            <h3 class="font-semibold text-slate-800 text-sm mb-3">Equipos del Cliente</h3>
+                            <div class="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto pr-1">
+                                <label v-for="equipment in equipments" :key="equipment.id" 
+                                    class="flex items-center gap-2 px-3 py-2 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition cursor-pointer select-none text-xs">
+                                    <input type="checkbox" :value="equipment.id" v-model="form.equipment_ids" 
+                                        class="rounded border-slate-300 text-cyan-500 focus:ring-cyan-400 w-3.5 h-3.5" />
+                                    <div class="flex-1 min-w-0">
+                                        <p class="font-semibold text-slate-800 truncate">{{ equipment.model }}</p>
+                                        <p class="text-[10px] text-slate-400 truncate">{{ equipment.capacity }}</p>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end pt-5 border-t border-slate-100 mt-5">
                             <button type="submit" :disabled="form.processing"
                                 class="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-600 text-white rounded-xl text-sm font-semibold transition shadow-sm shadow-cyan-200">
                                 {{ form.processing ? 'Guardando...' : (client ? 'Actualizar' : 'Crear Cliente') }}
@@ -155,13 +193,19 @@
                                 </p>
                             </div>
                             <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
-                                <button @click="editBranch(branch)"
+                                <button @click="duplicateBranch(branch)" title="Duplicar Sucursal"
+                                    class="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 rounded-lg transition">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" />
+                                    </svg>
+                                </button>
+                                <button @click="editBranch(branch)" title="Editar"
                                     class="p-1.5 text-slate-400 hover:text-cyan-600 hover:bg-cyan-100 rounded-lg transition">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                                     </svg>
                                 </button>
-                                <button @click="deleteBranch(branch.id)"
+                                <button @click="deleteBranch(branch.id)" title="Eliminar"
                                     class="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -184,7 +228,10 @@ import { Link, useForm, router } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 import FormField from '@/Components/FormField.vue';
 
-const props = defineProps({ client: Object });
+const props = defineProps({ 
+    client: Object,
+    equipments: { type: Array, default: () => [] }
+});
 const showBranchForm = ref(false);
 const branchSearch = ref('');
 
@@ -197,6 +244,12 @@ const form = useForm({
     email: props.client?.email ?? '',
     phone: props.client?.phone ?? '',
     address: props.client?.address ?? '',
+    credit_limit: props.client?.credit_limit ?? '',
+    credit_days: props.client?.credit_days ?? '',
+    is_active: props.client?.is_active ?? true,
+    vendedor_id: props.client?.vendedor_id ?? '',
+    vendedor_nombre: props.client?.vendedor_nombre ?? '',
+    equipment_ids: props.client?.equipments?.map(e => e.id) ?? [],
 });
 
 const branchForm = useForm({ id: null, name: '', brand_name: '', route: '', address: '', email: '' });
@@ -240,6 +293,24 @@ function editBranch(branch) {
     branchForm.address = branch.address;
     branchForm.email = branch.email;
     showBranchForm.value = true;
+}
+
+function duplicateBranch(branch) {
+    branchForm.id = null; // Representa una nueva sucursal
+    branchForm.name = branch.name + ' - copia';
+    branchForm.brand_name = branch.brand_name;
+    branchForm.route = branch.route;
+    branchForm.address = branch.address;
+    branchForm.email = branch.email;
+    showBranchForm.value = true;
+    
+    // Auto-scroll al formulario
+    setTimeout(() => {
+        const formEl = document.querySelector('.bg-slate-50.rounded-xl');
+        if (formEl) {
+            formEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 100);
 }
 
 function addBranch() {

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../services/sync_service.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
+import 'visits_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -111,9 +113,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           body = _buildHome();
           break;
         case 2:
-          body = HistoryScreen(initialFilter: _historyFilter);
+          body = const VisitsScreen();
           break;
         case 3:
+          body = HistoryScreen(initialFilter: _historyFilter);
+          break;
+        case 4:
           body = const ProfileScreen();
           break;
         default:
@@ -139,7 +144,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             )
           : null,
-      body: body,
+      body: Column(
+        children: [
+          _buildSyncBanner(),
+          Expanded(child: body),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) {
@@ -149,7 +159,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           } else {
             setState(() {
               _currentIndex = index;
-              if (index == 2) {
+              if (index == 3) {
                 _historyFilter =
                     'Todos'; // Reset filter when clicking tab directly
               }
@@ -163,6 +173,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Inicio'),
           BottomNavigationBarItem(
               icon: Icon(Icons.assignment_outlined), label: 'Pedido'),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.pin_drop_outlined), label: 'Visitas'),
           BottomNavigationBarItem(
               icon: Icon(Icons.history), label: 'Historial'),
           BottomNavigationBarItem(
@@ -264,7 +276,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onPressed: () {
                 setState(() {
                   _historyFilter = 'Entregas Hoy';
-                  _currentIndex = 2; // Switch to History tab
+                  _currentIndex = 3; // Switch to History tab
                 });
               },
               style: ElevatedButton.styleFrom(
@@ -346,6 +358,77 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
       contentPadding: EdgeInsets.zero,
+    );
+  }
+
+  Widget _buildSyncBanner() {
+    return Consumer<SyncService>(
+      builder: (context, sync, _) {
+        if (sync.isOnline && sync.pendingOrdersCount == 0 && !sync.isSyncing) {
+          return const SizedBox.shrink();
+        }
+
+        final bool isOffline = !sync.isOnline;
+        final int pendingCount = sync.pendingOrdersCount;
+
+        Color bg = isOffline ? Colors.orange.shade800 : Colors.blue.shade800;
+        IconData icon = isOffline ? Icons.wifi_off_rounded : Icons.sync_rounded;
+        String text = '';
+
+        if (isOffline) {
+          text = 'Modo Sin Conexión';
+          if (pendingCount > 0) {
+            text += ' ($pendingCount pedido(s) por sincronizar)';
+          }
+        } else if (sync.isSyncing) {
+          text = 'Sincronizando pedidos en segundo plano...';
+        } else if (pendingCount > 0) {
+          text = '$pendingCount pedido(s) pendientes de sincronización';
+        }
+
+        return Container(
+          width: double.infinity,
+          color: bg,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (sync.isOnline && pendingCount > 0 && !sync.isSyncing)
+                InkWell(
+                  onTap: () {
+                    final api = context.read<ApiService>();
+                    sync.syncPendingData(api);
+                  },
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Sincronizar',
+                      style: TextStyle(
+                          color: Colors.blue,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

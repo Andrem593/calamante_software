@@ -10,6 +10,8 @@ use App\Http\Controllers\Admin\OrderController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\SettingController;
 use App\Http\Controllers\Admin\SpecialPriceController;
+use App\Http\Controllers\Admin\VisitController;
+use App\Http\Controllers\Admin\EquipmentController;
 
 Route::get('/', function () {
     return redirect('/admin');
@@ -31,6 +33,7 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
     Route::resource('users', UserController::class)->middleware('admin:superadmin,admin');
 
     Route::resource('products', ProductController::class);
+    Route::resource('equipments', EquipmentController::class);
     Route::post('products/sync', [ProductController::class, 'sync'])->name('products.sync');
     Route::post('products/{product}/toggle-visibility', [ProductController::class, 'toggleVisibility'])->name('products.toggle-visibility');
     Route::post('clients/sync', [ClientController::class, 'sync'])->name('clients.sync');
@@ -42,6 +45,11 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
 
     Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('orders/map', [OrderController::class, 'map'])->name('orders.map');
+    Route::get('visits/map', [VisitController::class, 'map'])->name('visits.map');
+    Route::get('visits/export-pdf', [VisitController::class, 'exportPdf'])->name('visits.export-pdf');
+    Route::get('visits/export-excel', [VisitController::class, 'exportExcel'])->name('visits.export-excel');
+    Route::match(['get', 'post'], 'visits/export-pdf-map', [VisitController::class, 'exportMapPdf'])->name('visits.export-pdf-map');
+    Route::resource('visits', VisitController::class)->only(['index', 'destroy']);
     Route::post('orders/bulk-deliver', [OrderController::class, 'bulkDeliver'])->name('orders.bulk-deliver');
     Route::get('orders/bulk-print', [OrderController::class, 'bulkPrint'])->name('orders.bulk-print');
     Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
@@ -54,7 +62,16 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
     Route::post('orders/{order}/deliver', [OrderController::class, 'deliver'])->name('orders.deliver');
     Route::get('reports', [ReportController::class, 'index'])->name('reports.index');
     Route::get('reports/sales', [ReportController::class, 'sales'])->name('reports.sales');
+    Route::get('reports/sales/export', [ReportController::class, 'exportSales'])->name('reports.sales.export');
+    Route::get('reports/receivables', [ReportController::class, 'receivables'])->name('reports.receivables');
+    Route::get('reports/receivables/export', [ReportController::class, 'exportReceivables'])->name('reports.receivables.export');
     Route::get('reports/sellers', [ReportController::class, 'sellers'])->name('reports.sellers');
+    Route::get('reports/active-clients-billing', [ReportController::class, 'activeClientsBilling'])->name('reports.active-clients-billing');
+    Route::get('reports/active-clients-billing/export', [ReportController::class, 'exportActiveClientsBilling'])->name('reports.active-clients-billing.export');
+    Route::get('reports/branches-geolocation', [ReportController::class, 'branchesGeolocation'])->name('reports.branches-geolocation');
+    Route::get('reports/branches-geolocation/export', [ReportController::class, 'exportBranchesGeolocation'])->name('reports.branches-geolocation.export');
+    Route::get('reports/presale-direct-sale', [ReportController::class, 'presaleDirectSale'])->name('reports.presale-direct-sale');
+    Route::get('reports/presale-direct-sale/export', [ReportController::class, 'exportPresaleDirectSale'])->name('reports.presale-direct-sale.export');
 });
 
 Route::get('/login', function () {

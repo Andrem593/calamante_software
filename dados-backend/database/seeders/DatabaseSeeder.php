@@ -45,5 +45,10 @@ class DatabaseSeeder extends Seeder
             'stock' => 100,
             'sku' => 'PROD-B',
         ]);
+
+        $this->call([
+            AdminSeeder::class,
+            EquipmentSeeder::class,
+        ]);
     }
 }

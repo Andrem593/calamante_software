@@ -82,7 +82,7 @@ import { onMounted, onUnmounted, ref, reactive, watch } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
 
-const props = defineProps({ orders: Array, filters: Object });
+const props = defineProps({ orders: Array, google_maps_api_key: String, filters: Object });
 
 const selectedId = ref(null);
 
@@ -117,7 +117,7 @@ onMounted(() => {
         initMap();
     } else {
         const script = document.createElement('script');
-        script.src = `https://maps.googleapis.com/maps/api/js?key=AIzaSyAke5BPxPnbx-jNK6kefDC10bvKS4GcqR4&callback=initGMap`;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${props.google_maps_api_key || ''}&callback=initGMap`;
         script.async = true;
         window.initGMap = initMap;
         document.head.appendChild(script);

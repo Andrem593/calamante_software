@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 
 class HistoryScreen extends StatefulWidget {
@@ -14,12 +15,26 @@ class _HistoryScreenState extends State<HistoryScreen> {
   List<dynamic> _orders = [];
   bool _loading = true;
   late String _filter;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  DateTimeRange? _selectedDateRange;
 
   @override
   void initState() {
     super.initState();
     _filter = widget.initialFilter ?? 'Todos';
+    _searchCtrl.addListener(() {
+      setState(() {
+        _searchQuery = _searchCtrl.text;
+      });
+    });
     _loadOrders();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadOrders() async {
@@ -34,22 +49,79 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
   }
 
+  String _formatDate(String? dateStr) {
+    if (dateStr == null) return 'N/A';
+    try {
+      final dt = DateTime.parse(dateStr);
+      return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+    } catch (_) {
+      return dateStr.split('T')[0];
+    }
+  }
+
+  String _formatDateShort(DateTime dt) {
+    return '${dt.day}/${dt.month}';
+  }
+
+  Future<void> _selectDateRange() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDateRange: _selectedDateRange ?? DateTimeRange(
+        start: DateTime.now().subtract(const Duration(days: 7)),
+        end: DateTime.now(),
+      ),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF03A9F4),
+              onPrimary: Colors.white,
+              onSurface: Colors.black87,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _selectedDateRange = picked);
+    }
+  }
+
+  Future<void> _generatePdfReport() async {
+    final api = context.read<ApiService>();
+    final token = api.token;
+    final baseUrl = ApiService.baseUrl;
+    
+    final uriStr = '$baseUrl/orders/report-pdf?token=$token'
+        '&start_date=${_selectedDateRange != null ? _selectedDateRange!.start.toIso8601String().split('T')[0] : ""}'
+        '&end_date=${_selectedDateRange != null ? _selectedDateRange!.end.toIso8601String().split('T')[0] : ""}'
+        '&status=$_filter';
+        
+    final uri = Uri.parse(uriStr);
+    
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir el PDF del reporte'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   List<dynamic> get _filteredOrders {
-    if (_filter == 'Todos') return _orders;
+    List<dynamic> list = _orders;
     if (_filter == 'Pendientes') {
-      return _orders
+      list = list
           .where((o) => o['status'] == 'pending' || o['status'] == 'processed')
           .toList();
-    }
-    if (_filter == 'Completados') {
-      return _orders.where((o) => o['status'] == 'delivered').toList();
-    }
-    if (_filter == 'Cancelados') {
-      return _orders.where((o) => o['status'] == 'cancelled').toList();
-    }
-    if (_filter == 'Entregas Hoy') {
+    } else if (_filter == 'Completados') {
+      list = list.where((o) => o['status'] == 'delivered').toList();
+    } else if (_filter == 'Cancelados') {
+      list = list.where((o) => o['status'] == 'cancelled').toList();
+    } else if (_filter == 'Entregas Hoy') {
       final now = DateTime.now();
-      return _orders.where((o) {
+      list = list.where((o) {
         if (o['delivery_date'] == null) return false;
         final d = DateTime.parse(o['delivery_date']);
         return d.year == now.year &&
@@ -58,7 +130,28 @@ class _HistoryScreenState extends State<HistoryScreen> {
             o['status'] != 'cancelled';
       }).toList();
     }
-    return _orders;
+
+    if (_searchQuery.isNotEmpty) {
+      final q = _searchQuery.toLowerCase();
+      list = list.where((o) {
+        final clientName = (o['client']?['nombre_local'] ?? o['client']?['name'] ?? '').toString().toLowerCase();
+        final orderId = o['id'].toString();
+        return clientName.contains(q) || orderId.contains(q);
+      }).toList();
+    }
+
+    if (_selectedDateRange != null) {
+      list = list.where((o) {
+        final dateStr = o['created_at'] ?? o['delivery_date'];
+        if (dateStr == null) return false;
+        final dt = DateTime.parse(dateStr);
+        final start = DateTime(_selectedDateRange!.start.year, _selectedDateRange!.start.month, _selectedDateRange!.start.day);
+        final end = DateTime(_selectedDateRange!.end.year, _selectedDateRange!.end.month, _selectedDateRange!.end.day, 23, 59, 59);
+        return dt.isAfter(start.subtract(const Duration(seconds: 1))) && dt.isBefore(end.add(const Duration(seconds: 1)));
+      }).toList();
+    }
+
+    return list;
   }
 
   @override
@@ -70,15 +163,47 @@ class _HistoryScreenState extends State<HistoryScreen> {
             style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
+            tooltip: 'Generar Reporte PDF',
+            onPressed: _generatePdfReport,
+          ),
+          const SizedBox(width: 10),
+        ],
       ),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
             child: TextField(
+              controller: _searchCtrl,
               decoration: InputDecoration(
-                hintText: 'Buscar pedidos',
+                hintText: 'Buscar por cliente o ID...',
                 prefixIcon: const Icon(Icons.search),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_selectedDateRange != null) ...[
+                      Text(
+                        '${_formatDateShort(_selectedDateRange!.start)} - ${_formatDateShort(_selectedDateRange!.end)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF03A9F4),
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.red, size: 20),
+                        onPressed: () => setState(() => _selectedDateRange = null),
+                      ),
+                    ] else
+                      IconButton(
+                        icon: const Icon(Icons.calendar_today, color: Color(0xFF03A9F4), size: 20),
+                        onPressed: _selectDateRange,
+                      ),
+                  ],
+                ),
                 fillColor: const Color(0xFFF1FBFE),
                 filled: true,
                 border: OutlineInputBorder(
@@ -106,13 +231,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 ? const Center(child: CircularProgressIndicator())
                 : _filteredOrders.isEmpty
                     ? const Center(child: Text('No hay pedidos que mostrar'))
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(20),
-                        itemCount: _filteredOrders.length,
-                        itemBuilder: (context, index) {
-                          final order = _filteredOrders[index];
-                          return _buildOrderCard(order);
-                        },
+                    : RefreshIndicator(
+                        onRefresh: _loadOrders,
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(20),
+                          itemCount: _filteredOrders.length,
+                          itemBuilder: (context, index) {
+                            final order = _filteredOrders[index];
+                            return _buildOrderCard(order);
+                          },
+                        ),
                       ),
           ),
         ],
@@ -158,7 +286,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       statusColor = Colors.deepPurple;
     }
 
-    // Lógica para "En camino"
     if (status != 'delivered' && status != 'cancelled') {
       final deliveryDateStr = order['delivery_date'];
       if (deliveryDateStr != null) {
@@ -175,7 +302,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
     return GestureDetector(
       onTap: () =>
-          Navigator.pushNamed(context, '/order_detail', arguments: order['id']),
+          Navigator.pushNamed(context, '/order_detail', arguments: order['id']).then((_) => _loadOrders()),
       child: Container(
         margin: const EdgeInsets.only(bottom: 15),
         padding: const EdgeInsets.all(16),
@@ -198,6 +325,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       style: const TextStyle(color: Colors.grey),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1),
+                  const SizedBox(height: 4),
+                  Text('Fecha: ${_formatDate(order['created_at'] ?? order['delivery_date'])}',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  const SizedBox(height: 2),
+                  Text('Total: \$${double.tryParse(order['total']?.toString() ?? '0.0')?.toStringAsFixed(2) ?? '0.00'}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF03A9F4), fontSize: 13)),
                   if ((order['is_invoiced'] == true || order['is_invoiced'] == 1) || (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1))
                     Padding(
                       padding: const EdgeInsets.only(top: 4.0),
@@ -205,7 +338,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         children: [
                           Icon(Icons.receipt_long,
                               size: 14, color: (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1) ? Colors.purple : Colors.blue),
-                          SizedBox(width: 4),
+                          const SizedBox(width: 4),
                           Text(
                               (order['is_preinvoiced'] == true || order['is_preinvoiced'] == 1) ? 'Prefacturado' : 'Facturado',
                               style: TextStyle(

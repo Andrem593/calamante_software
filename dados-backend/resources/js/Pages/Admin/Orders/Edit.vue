@@ -77,7 +77,7 @@
                     <!-- Items Table -->
                     <div class="mb-8">
                         <h3 class="text-sm font-bold text-slate-700 uppercase tracking-wider mb-4">Productos en el Pedido</h3>
-                        <div class="border border-slate-100 rounded-2xl overflow-hidden">
+                        <div class="border border-slate-100 rounded-2xl overflow-hidden overflow-x-auto">
                             <table class="w-full text-sm">
                                 <thead class="bg-slate-50 text-slate-600 font-semibold">
                                     <tr>

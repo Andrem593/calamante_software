@@ -39,4 +39,13 @@ class DashboardController extends Controller
                 ->get(),
         ]);
     }
+
+    public function appVersion()
+    {
+        return response()->json([
+            'latest_version' => \App\Models\Setting::get('LATEST_APP_VERSION', '1.0.4'),
+            'min_required_version' => \App\Models\Setting::get('MIN_REQUIRED_APP_VERSION', '1.0.4'),
+            'apk_url' => \App\Models\Setting::get('APP_APK_URL', 'https://app.grupo-dados.com/downloads/dados-app.apk'),
+        ]);
+    }
 }

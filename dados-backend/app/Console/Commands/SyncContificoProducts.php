@@ -8,11 +8,14 @@ use Illuminate\Console\Command;
 
 class SyncContificoProducts extends Command
 {
-    protected $signature = 'sync:contifico-products';
+    protected $signature = 'sync:contifico-products {--inactive : Sincronizar solo productos inactivos} {--only-inactive : Sincronizar solo productos inactivos}';
     protected $description = 'Sincroniza productos desde Contifico';
 
     public function handle(ContificoService $contifico)
     {
+        $onlyInactive = $this->option('inactive') || $this->option('only-inactive');
+        $estadoParam = $onlyInactive ? 'I' : null;
+
         $this->info('Iniciando sincronización de categorías...');
         $categories = $contifico->fetchCategories();
         $catCount = 0;
@@ -28,10 +31,10 @@ class SyncContificoProducts extends Command
         }
         $this->info("Sincronización de categorías completada. Se crearon {$catCount} nuevas.");
 
-        $this->info('Iniciando sincronización de productos...');
+        $this->info('Iniciando sincronización de productos' . ($onlyInactive ? ' (solo INACTIVOS)' : '') . '...');
         
-        \Log::info('Contifico Sync: Starting products fetch');
-        $products = $contifico->fetchProducts();
+        \Log::info('Contifico Sync: Starting products fetch' . ($onlyInactive ? ' (inactive)' : ''));
+        $products = $contifico->fetchProducts($estadoParam);
         \Log::info('Contifico Sync: Products size: ' . (is_array($products) ? count($products) : 'not an array'));
         
         if (empty($products)) {

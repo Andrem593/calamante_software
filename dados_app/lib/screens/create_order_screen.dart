@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:convert';
 import '../services/api_service.dart';
+import '../services/offline_database_service.dart';
 import '../models/models.dart';
 
 class CreateOrderScreen extends StatefulWidget {
@@ -39,7 +40,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   final TextEditingController _notesCtrl = TextEditingController();
   final TextEditingController _addressCtrl = TextEditingController();
   final TextEditingController _branchEmailCtrl = TextEditingController();
-  final TextEditingController _creditDaysCtrl = TextEditingController(text: '30');
+  final TextEditingController _creditDaysCtrl =
+      TextEditingController(text: '30');
   String _paymentMethod = 'Efectivo';
   bool _isDirectInvoice = false;
   DateTime _deliveryDate = DateTime.now().add(const Duration(days: 1));
@@ -85,11 +87,15 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     try {
       final data = await api.get('/products/categories');
       if (!mounted) return;
-      setState(() {
-        _categories = (data as List).map((j) => Category.fromJson(j)).toList();
-      });
+      final categories = (data as List).map((j) => Category.fromJson(j)).toList();
+      setState(() => _categories = categories);
+      await OfflineDatabaseService.instance.saveCategories(categories);
     } catch (e) {
-      debugPrint('Error cargando categorías: $e');
+      debugPrint('Error o sin red al cargar categorías. Cargando localmente: $e');
+      final localCats = await OfflineDatabaseService.instance.getCategoriesLocal();
+      if (mounted && localCats.isNotEmpty) {
+        setState(() => _categories = localCats);
+      }
     }
   }
 
@@ -97,15 +103,19 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   Future<void> _loadProducts({int? clientId}) async {
     final api = context.read<ApiService>();
     try {
-      final String endpoint = clientId != null ? '/products?client_id=$clientId' : '/products';
+      final String endpoint =
+          clientId != null ? '/products?client_id=$clientId' : '/products';
       final productsData = await api.get(endpoint);
       if (!mounted) return;
-      setState(() {
-        _products =
-            (productsData as List).map((j) => Product.fromJson(j)).toList();
-      });
+      final prods = (productsData as List).map((j) => Product.fromJson(j)).toList();
+      setState(() => _products = prods);
+      await OfflineDatabaseService.instance.saveProducts(prods);
     } catch (e) {
-      debugPrint('Error cargando productos: $e');
+      debugPrint('Error o sin red al cargar productos. Cargando localmente: $e');
+      final localProds = await OfflineDatabaseService.instance.getProductsLocal();
+      if (mounted && localProds.isNotEmpty) {
+        setState(() => _products = localProds);
+      }
     }
   }
 
@@ -124,25 +134,35 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         final data = await api
             .get('/clients/search?q=${Uri.encodeComponent(value.trim())}');
         if (!mounted) return;
-        setState(() {
-          _searchResults =
-              (data as List).map((j) => Client.fromJson(j)).toList();
-        });
+        final clients = (data as List).map((j) => Client.fromJson(j)).toList();
+        setState(() => _searchResults = clients);
+        await OfflineDatabaseService.instance.saveClients(clients);
       } catch (e) {
-        debugPrint('Error en búsqueda: $e');
+        debugPrint('Búsqueda remota falló (offline). Buscando localmente: $e');
+        final localClients = await OfflineDatabaseService.instance.searchClientsLocal(value.trim());
+        if (mounted) {
+          setState(() => _searchResults = localClients);
+        }
       } finally {
         if (mounted) setState(() => _isSearching = false);
       }
     });
   }
 
-  // ── Selección de cliente → carga sus sucursales
+  ClientCreditStatus? _creditStatus;
+  bool _loadingCreditStatus = false;
+
+  // ── Selección de cliente → carga sus sucursales y estado de crédito desde Contifico
   Future<void> _selectClient(Client client) async {
-    String displayName = client.nombreLocal != null && client.nombreLocal!.isNotEmpty
-        ? client.nombreLocal!
-        : (client.companyName != null && client.companyName!.isNotEmpty
-            ? client.companyName!
-            : client.name);
+    String displayName =
+        client.nombreLocal != null && client.nombreLocal!.isNotEmpty
+            ? client.nombreLocal!
+            : (client.companyName != null && client.companyName!.isNotEmpty
+                ? client.companyName!
+                : client.name);
+
+    final bool initialHasCredit = (client.creditLimit != null && client.creditLimit! > 0) ||
+                                  (client.creditDays != null && client.creditDays! > 0);
 
     setState(() {
       _selectedClient = client;
@@ -151,21 +171,101 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _branches = [];
       _selectedBranch = null;
       _loadingBranches = true;
+      _creditStatus = null;
+      _loadingCreditStatus = true;
+      if (initialHasCredit) {
+        _paymentMethod = 'Crédito';
+        _creditDaysCtrl.text = (client.creditDays != null && client.creditDays! > 0)
+            ? client.creditDays.toString()
+            : '30';
+      } else {
+        _paymentMethod = 'Efectivo';
+        _creditDaysCtrl.text = '0';
+      }
     });
     _saveDraft();
 
     try {
       final api = context.read<ApiService>();
-      final data = await api.get('/clients/${client.id}/branches');
-      if (!mounted) return;
-      setState(() {
-        _branches = (data as List).map((j) => Branch.fromJson(j)).toList();
-      });
+      try {
+        final data = await api.get('/clients/${client.id}/branches');
+        if (mounted) {
+          final branches = (data as List).map((j) => Branch.fromJson(j)).toList();
+          setState(() => _branches = branches);
+          await OfflineDatabaseService.instance.saveBranches(client.id, branches);
+        }
+      } catch (e) {
+        debugPrint('Sucursales falló online. Cargando localmente: $e');
+        final localBranches = await OfflineDatabaseService.instance.getBranchesLocal(client.id);
+        if (mounted) setState(() => _branches = localBranches);
+      }
+
       await _loadProducts(clientId: client.id);
+
+      // Cargar facturas pendientes y límite de crédito desde Contifico a través del backend
+      try {
+        final statusJson = await api.getClientCreditStatus(client.id);
+        if (mounted) {
+          final creditStatus = ClientCreditStatus.fromJson(statusJson);
+          final bool hasCreditConfigured = creditStatus.hasCreditConfigured ||
+              (creditStatus.creditLimit != null && creditStatus.creditLimit! > 0) ||
+              (creditStatus.creditDays != null && creditStatus.creditDays! > 0);
+
+          setState(() {
+            _creditStatus = creditStatus;
+            _loadingCreditStatus = false;
+            if (hasCreditConfigured) {
+              _paymentMethod = 'Crédito';
+              if (creditStatus.creditDays != null && creditStatus.creditDays! > 0) {
+                _creditDaysCtrl.text = creditStatus.creditDays.toString();
+              }
+            } else {
+              _paymentMethod = 'Efectivo';
+              _creditDaysCtrl.text = '0';
+            }
+          });
+          _saveDraft();
+          _checkAndShowCreditDialog(creditStatus);
+        }
+      } catch (e) {
+        debugPrint('No se pudo consultar estado de crédito en vivo (Modo Offline): $e');
+        if (mounted) {
+          final offlineStatus = ClientCreditStatus(
+            clientId: client.id,
+            identification: client.identification,
+            creditLimit: client.creditLimit,
+            creditDays: client.creditDays,
+            hasCreditConfigured: (client.creditLimit != null && client.creditLimit! > 0) || (client.creditDays != null && client.creditDays! > 0),
+            totalPendiente: 0.0,
+            totalVencido: 0.0,
+            countPendientes: 0,
+            countVencidos: 0,
+            availableCredit: client.creditLimit,
+            documents: [],
+          );
+          setState(() {
+            _creditStatus = offlineStatus;
+            _loadingCreditStatus = false;
+            if (initialHasCredit) {
+              _paymentMethod = 'Crédito';
+            } else {
+              _paymentMethod = 'Efectivo';
+              _creditDaysCtrl.text = '0';
+            }
+          });
+          _saveDraft();
+          _checkAndShowCreditDialog(offlineStatus);
+        }
+      }
     } catch (e) {
-      debugPrint('Error cargando sucursales: $e');
+      debugPrint('Error cargando sucursales/crédito: $e');
     } finally {
-      if (mounted) setState(() => _loadingBranches = false);
+      if (mounted) {
+        setState(() {
+          _loadingBranches = false;
+          _loadingCreditStatus = false;
+        });
+      }
     }
   }
 
@@ -177,6 +277,10 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _searchResults = [];
       _branches = [];
       _selectedBranch = null;
+      _creditStatus = null;
+      _loadingCreditStatus = false;
+      _paymentMethod = 'Efectivo';
+      _creditDaysCtrl.text = '0';
     });
     _saveDraft();
     _loadProducts();
@@ -219,7 +323,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       debugPrint('CreateOrderScreen: Error en Geolocator: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudo obtener la ubicación precisa')),
+          const SnackBar(
+              content: Text('No se pudo obtener la ubicación precisa')),
         );
       }
     }
@@ -277,7 +382,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _paymentMethod = prefs.getString('draft_payment_method') ?? 'Efectivo';
       _creditDaysCtrl.text = prefs.getString('draft_credit_days') ?? '30';
       _isDirectInvoice = prefs.getBool('draft_is_direct_invoice') ?? false;
-      
+
       final lat = prefs.getDouble('draft_lat');
       final lng = prefs.getDouble('draft_lng');
       if (lat != null && lng != null) {
@@ -365,6 +470,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                               fontSize: 16, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 10),
                       _buildClientSearch(),
+                      if (_selectedClient != null) _buildCreditSummaryCard(),
                       const SizedBox(height: 12),
 
                       // ── Selector de sucursal ────────────────────────────────
@@ -465,64 +571,75 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         final qty = _cart[product.id] ?? 0;
                         return Container(
                           margin: const EdgeInsets.only(bottom: 8),
-                          decoration: BoxDecoration(
+                          child: Material(
                             color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey[100]!),
-                          ),
-                          child: ListTile(
-                            title: Text(product.name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                            subtitle: product.discountPercentage > 0
-                                ? Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const SizedBox(height: 4),
-                                      Row(
-                                        children: [
-                                          Text(
-                                            '\$${product.price.toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              decoration: TextDecoration.lineThrough,
-                                              color: Colors.grey,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Text(
-                                            '\$${(product.price * (1 - product.discountPercentage / 100)).toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              color: Colors.lightBlue,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 14,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                            decoration: BoxDecoration(
-                                              color: Colors.amber[100],
-                                              borderRadius: BorderRadius.circular(4),
-                                            ),
-                                            child: Text(
-                                              '-${product.discountPercentage.toStringAsFixed(1)}%',
-                                              style: TextStyle(
-                                                color: Colors.amber[800],
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 9,
+                            clipBehavior: Clip.antiAlias,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: Colors.grey[100]!),
+                            ),
+                            child: ListTile(
+                              title: Text(product.name,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold)),
+                              subtitle: product.discountPercentage > 0
+                                  ? Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            Text(
+                                              '\$${product.price.toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                decoration:
+                                                    TextDecoration.lineThrough,
+                                                color: Colors.grey,
+                                                fontSize: 12,
                                               ),
                                             ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text('Stock: ${product.stock}', style: const TextStyle(fontSize: 12)),
-                                    ],
-                                  )
-                                : Text(
-                                    '\$${product.price.toStringAsFixed(2)} - Stock: ${product.stock}'),
-                            trailing: _buildQuantitySelector(product, qty),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              '\$${(product.price * (1 - product.discountPercentage / 100)).toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                color: Colors.lightBlue,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 14,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                      vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: Colors.amber[100],
+                                                borderRadius:
+                                                    BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                '-${product.discountPercentage.toStringAsFixed(1)}%',
+                                                style: TextStyle(
+                                                  color: Colors.amber[800],
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 9,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text('Stock: ${product.stock}',
+                                            style:
+                                                const TextStyle(fontSize: 12)),
+                                      ],
+                                    )
+                                  : Text(
+                                      '\$${product.price.toStringAsFixed(2)} - Stock: ${product.stock}'),
+                              trailing: _buildQuantitySelector(product, qty),
+                            ),
                           ),
                         );
                       }),
@@ -557,6 +674,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         onChanged: (v) {
                           setState(() => _paymentMethod = v!);
                           _saveDraft();
+                          if (v == 'Crédito') {
+                            _checkCreditWarningOnPaymentMethod();
+                          }
                         },
                       ),
 
@@ -761,8 +881,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             const Text('Subtotal:',
                                 style: TextStyle(color: Colors.grey)),
                             Text('\$${_calculateSubtotal().toStringAsFixed(2)}',
-                                style:
-                                    const TextStyle(fontWeight: FontWeight.bold)),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
                           ],
                         ),
                         Row(
@@ -868,57 +988,60 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         if (_searchResults.isNotEmpty)
           Container(
             margin: const EdgeInsets.only(top: 4),
-            decoration: BoxDecoration(
+            child: Material(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 4))
-              ],
-              border: Border.all(color: Colors.grey[200]!),
-            ),
-            child: Column(
-              children: _searchResults.map((client) {
-                return InkWell(
-                  onTap: () => _selectClient(client),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.person_outline,
-                            color: Colors.lightBlue, size: 20),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(client.nombreLocal != null && client.nombreLocal!.isNotEmpty
-                                  ? client.nombreLocal!
-                                  : (client.companyName != null && client.companyName!.isNotEmpty
-                                      ? client.companyName!
-                                      : client.name),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 14)),
-                              if (client.identification != null &&
-                                  client.identification!.isNotEmpty)
-                                Text(client.identification!,
-                                    style: TextStyle(
-                                        fontSize: 12, color: Colors.grey[600])),
-                            ],
+              clipBehavior: Clip.antiAlias,
+              elevation: 2,
+              shadowColor: Colors.black.withOpacity(0.4),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey[200]!),
+              ),
+              child: Column(
+                children: _searchResults.map((client) {
+                  return InkWell(
+                    onTap: () => _selectClient(client),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.person_outline,
+                              color: Colors.lightBlue, size: 20),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    client.nombreLocal != null &&
+                                            client.nombreLocal!.isNotEmpty
+                                        ? client.nombreLocal!
+                                        : (client.companyName != null &&
+                                                client.companyName!.isNotEmpty
+                                            ? client.companyName!
+                                            : client.name),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14)),
+                                if (client.identification != null &&
+                                    client.identification!.isNotEmpty)
+                                  Text(client.identification!,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey[600])),
+                              ],
+                            ),
                           ),
-                        ),
-                        const Icon(Icons.arrow_forward_ios,
-                            size: 14, color: Colors.grey),
-                      ],
+                          const Icon(Icons.arrow_forward_ios,
+                              size: 14, color: Colors.grey),
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }).toList(),
+              ),
             ),
           ),
 
@@ -939,11 +1062,14 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       color: Color(0xFF03A9F4), size: 20),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(_selectedClient!.nombreLocal != null && _selectedClient!.nombreLocal!.isNotEmpty
-                        ? _selectedClient!.nombreLocal!
-                        : (_selectedClient!.companyName != null && _selectedClient!.companyName!.isNotEmpty
-                            ? _selectedClient!.companyName!
-                            : _selectedClient!.name),
+                    child: Text(
+                        _selectedClient!.nombreLocal != null &&
+                                _selectedClient!.nombreLocal!.isNotEmpty
+                            ? _selectedClient!.nombreLocal!
+                            : (_selectedClient!.companyName != null &&
+                                    _selectedClient!.companyName!.isNotEmpty
+                                ? _selectedClient!.companyName!
+                                : _selectedClient!.name),
                         style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF0277BD))),
@@ -1008,7 +1134,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                         child: TextField(
                           decoration: InputDecoration(
                             hintText: 'Buscar sucursal...',
-                            prefixIcon: const Icon(Icons.search, color: Colors.lightBlue),
+                            prefixIcon: const Icon(Icons.search,
+                                color: Colors.lightBlue),
                             fillColor: const Color(0xFFF1FBFE),
                             filled: true,
                             border: OutlineInputBorder(
@@ -1029,8 +1156,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           controller: controller,
                           children: [
                             ListTile(
-                              leading: const Icon(Icons.store_mall_directory_outlined, color: Colors.grey),
-                              title: const Text('Sin sucursal específica', style: TextStyle(color: Colors.grey)),
+                              leading: const Icon(
+                                  Icons.store_mall_directory_outlined,
+                                  color: Colors.grey),
+                              title: const Text('Sin sucursal específica',
+                                  style: TextStyle(color: Colors.grey)),
                               onTap: () {
                                 setState(() {
                                   _selectedBranch = null;
@@ -1042,14 +1172,16 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             ),
                             ...filtered.map((b) {
                               return ListTile(
-                                leading: const Icon(Icons.store, color: Colors.lightBlue),
+                                leading: const Icon(Icons.store,
+                                    color: Colors.lightBlue),
                                 title: Text(b.name),
                                 subtitle: Text(b.address ?? 'Sin dirección'),
                                 selected: _selectedBranch?.id == b.id,
                                 onTap: () {
                                   setState(() {
                                     _selectedBranch = b;
-                                    if (b.email != null && b.email!.isNotEmpty) {
+                                    if (b.email != null &&
+                                        b.email!.isNotEmpty) {
                                       _branchEmailCtrl.text = b.email!;
                                     }
                                   });
@@ -1146,7 +1278,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     _cart.forEach((productId, qty) {
       if (qty > 0) {
         final product = _products.firstWhere((p) => p.id == productId);
-        final double discountedPrice = product.price * (1 - product.discountPercentage / 100);
+        final double discountedPrice =
+            product.price * (1 - product.discountPercentage / 100);
         subtotal += discountedPrice * qty;
       }
     });
@@ -1158,7 +1291,8 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     _cart.forEach((productId, qty) {
       if (qty > 0) {
         final product = _products.firstWhere((p) => p.id == productId);
-        final double discountedPrice = product.price * (1 - product.discountPercentage / 100);
+        final double discountedPrice =
+            product.price * (1 - product.discountPercentage / 100);
         iva += (discountedPrice * qty) * (product.taxPercentage / 100);
       }
     });
@@ -1246,5 +1380,305 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         ],
       ),
     );
+  }
+
+  void _checkAndShowCreditDialog(ClientCreditStatus status) {
+    if (!mounted) return;
+
+    final bool hasOverdue = status.hasOverdueInvoices;
+    final bool isExhausted = status.isCreditExhausted;
+    final bool isLow = status.isLowCredit;
+    final bool noConfig = !status.hasCreditConfigured;
+
+    if (hasOverdue || isExhausted || isLow || noConfig) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(
+                hasOverdue || isExhausted
+                    ? Icons.warning_amber_rounded
+                    : Icons.info_outline,
+                color: hasOverdue || isExhausted ? Colors.red : Colors.orange,
+                size: 28,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Estado de Crédito del Cliente',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (noConfig)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.amber.shade300),
+                    ),
+                    child: const Text(
+                      '⚠️ El cliente NO tiene días de crédito ni monto asignado.',
+                      style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                if (hasOverdue)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade300),
+                    ),
+                    child: Text(
+                      '🚨 Facturas Vencidas: ${status.countVencidos} factura(s) por un total de \$${status.totalVencido.toStringAsFixed(2)}.',
+                      style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                if (isExhausted)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade300),
+                    ),
+                    child: Text(
+                      '⛔ Cupo Agotado: Total pendiente (\$${status.totalPendiente.toStringAsFixed(2)}) supera o iguala el cupo.',
+                      style: TextStyle(color: Colors.red.shade800, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                if (isLow && !isExhausted)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.orange.shade300),
+                    ),
+                    child: Text(
+                      '⚠️ Poco Cupo Disponible: Le quedan \$${status.availableCredit?.toStringAsFixed(2)} de \$${status.creditLimit?.toStringAsFixed(2)}.',
+                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                const Divider(),
+                _buildCreditDetailRow('Días de crédito:', status.creditDays != null && status.creditDays! > 0 ? '${status.creditDays} días' : 'Sin asignación'),
+                _buildCreditDetailRow('Monto límite (Cupo):', status.creditLimit != null && status.creditLimit! > 0 ? '\$${status.creditLimit!.toStringAsFixed(2)}' : 'Sin asignación'),
+                _buildCreditDetailRow('Total Pendiente:', '\$${status.totalPendiente.toStringAsFixed(2)} (${status.countPendientes} facturas)'),
+                _buildCreditDetailRow('Total Vencido:', '\$${status.totalVencido.toStringAsFixed(2)} (${status.countVencidos} facturas)', isWarning: hasOverdue),
+                if (status.creditLimit != null && status.creditLimit! > 0)
+                  _buildCreditDetailRow('Cupo Disponible:', '\$${(status.availableCredit ?? 0.0).toStringAsFixed(2)}', isBold: true),
+              ],
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF003366),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  Widget _buildCreditDetailRow(String label, String value, {bool isWarning = false, bool isBold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+          Text(
+            value,
+            style: TextStyle(
+              fontWeight: isBold || isWarning ? FontWeight.bold : FontWeight.normal,
+              color: isWarning ? Colors.red : (isBold ? Colors.green[800] : Colors.black87),
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCreditSummaryCard() {
+    if (_loadingCreditStatus) {
+      return Container(
+        margin: const EdgeInsets.only(top: 8, bottom: 12),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1FBFE),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            SizedBox(width: 12),
+            Text(
+              'Consultando estado de crédito en Contifico...',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final status = _creditStatus;
+    if (status == null) return const SizedBox.shrink();
+
+    final hasOverdue = status.hasOverdueInvoices;
+    final isExhausted = status.isCreditExhausted;
+    final isLow = status.isLowCredit;
+    final noConfig = !status.hasCreditConfigured;
+
+    Color cardColor = Colors.green.shade50;
+    Color borderColor = Colors.green.shade200;
+    IconData icon = Icons.check_circle_outline;
+    Color iconColor = Colors.green.shade700;
+
+    if (hasOverdue || isExhausted) {
+      cardColor = Colors.red.shade50;
+      borderColor = Colors.red.shade200;
+      icon = Icons.warning_amber_rounded;
+      iconColor = Colors.red.shade700;
+    } else if (isLow || noConfig) {
+      cardColor = Colors.amber.shade50;
+      borderColor = Colors.amber.shade300;
+      icon = Icons.info_outline;
+      iconColor = Colors.amber.shade900;
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 8, bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: iconColor, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  noConfig
+                      ? 'Cliente sin días/monto de crédito asignado'
+                      : (hasOverdue
+                          ? 'Facturas vencidas detectadas'
+                          : (isExhausted
+                              ? 'Cupo de crédito agotado'
+                              : (isLow ? 'Poco cupo disponible' : 'Crédito al día'))),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: iconColor,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+              InkWell(
+                onTap: () => _checkAndShowCreditDialog(status),
+                child: Padding(
+                  padding: const EdgeInsets.all(4.0),
+                  child: Text(
+                    'Ver detalle',
+                    style: TextStyle(
+                      color: Colors.blue.shade800,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Días crédito: ${status.creditDays != null && status.creditDays! > 0 ? "${status.creditDays}d" : "0d"}',
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+              Text(
+                'Pendiente: \$${status.totalPendiente.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: hasOverdue ? FontWeight.bold : FontWeight.normal,
+                  color: hasOverdue ? Colors.red.shade800 : Colors.black87,
+                ),
+              ),
+              Text(
+                'Disponible: ${status.availableCredit != null ? "\$${status.availableCredit!.toStringAsFixed(2)}" : "N/A"}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: isExhausted ? Colors.red.shade800 : Colors.green.shade900,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkCreditWarningOnPaymentMethod() {
+    final client = _selectedClient;
+    if (client == null) return;
+
+    final noLimit = client.creditLimit == null || client.creditLimit! <= 0;
+    final noDays = client.creditDays == null || client.creditDays! <= 0;
+
+    if (noLimit || noDays) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 4),
+          backgroundColor: Colors.amber.shade900,
+          content: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.white),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'El cliente NO tiene días de crédito ni monto asignado.',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
   }
 }

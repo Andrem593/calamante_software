@@ -78,6 +78,15 @@ RUN { \
     echo 'opcache.enable_cli=1'; \
 } > /usr/local/etc/php/conf.d/opcache-recommended.ini
 
+# Configurar limites de subida y timeouts de PHP
+RUN { \
+    echo 'upload_max_filesize=100M'; \
+    echo 'post_max_size=100M'; \
+    echo 'memory_limit=256M'; \
+    echo 'max_execution_time=300'; \
+    echo 'max_input_time=300'; \
+} > /usr/local/etc/php/conf.d/uploads.ini
+
 # Copiar configuraciones personalizadas de Nginx y Supervisor
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf

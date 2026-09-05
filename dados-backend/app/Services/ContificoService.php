@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Setting;
+use App\Models\Client;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -28,27 +29,51 @@ class ContificoService
         ])->timeout(30);
     }
 
-    public function fetchClients()
+    public function fetchClients(?string $estado = null)
     {
         try {
-            $response = $this->getClient()->get($this->baseUrl . 'persona/');
-            
-            if ($response->successful()) {
-                return $response->json();
+            $allResults = [];
+            $url = 'https://api.contifico.com/sistema/api/v2/persona/';
+            if ($estado) {
+                $url .= '?estado=' . urlencode($estado);
             }
 
-            Log::error('Error fetching clients from Contifico: ' . $response->body());
-            return [];
+            do {
+                $response = $this->getClient()->get($url);
+
+                if (!$response->successful()) {
+                    Log::error('Error fetching clients from Contifico: ' . $response->body());
+                    break;
+                }
+
+                $data = $response->json();
+
+                if (isset($data['results']) && is_array($data['results'])) {
+                    $allResults = array_merge($allResults, $data['results']);
+                    $url = $data['next'] ?? null;
+                } elseif (is_array($data)) {
+                    $allResults = array_merge($allResults, $data);
+                    $url = null;
+                } else {
+                    $url = null;
+                }
+            } while (!empty($url));
+
+            return $allResults;
         } catch (\Exception $e) {
             Log::error('Exception fetching clients from Contifico: ' . $e->getMessage());
             return [];
         }
     }
 
-    public function fetchProducts()
+    public function fetchProducts(?string $estado = null)
     {
         try {
-            $response = $this->getClient()->get($this->baseUrl . 'producto/');
+            $url = $this->baseUrl . 'producto/';
+            if ($estado) {
+                $url .= '?estado=' . urlencode($estado);
+            }
+            $response = $this->getClient()->get($url);
             
             if ($response->successful()) {
                 return $response->json();
@@ -103,21 +128,46 @@ class ContificoService
         }
 
         $pos = Setting::get('CONTIFICO_POS_UUID');
-        $branchName = $order->branch ? $order->branch->name : 'N/A';
+        $branchName = $order->branch ? $order->branch->name : null;
         $branchRoute = $order->branch ? ($order->branch->route ?? 'N/A') : 'N/A';
         $userName = $order->user ? $order->user->name : 'Vendedor';
-        $tipoPersona = $client->identification_type === 'Cedula' ? 'N' : 'J';
-        $isDirect = (bool)$order->is_invoiced;
-        $creditDays = (int)($order->credit_days ?? 0);
-        $fechaEmision = $order->created_at;
-        $fechaVencimiento = $fechaEmision->copy()->addDays($creditDays);
+        $isDirect = !empty($order->is_invoiced) || (bool) Setting::get('CONTIFICO_DIRECT_INVOICING', false);
+        $fechaEmision = \Carbon\Carbon::parse($order->created_at);
+        $fechaVencimiento = $fechaEmision->copy()->addDays((int)($order->credit_days ?? 0));
+        $vendedorAsignado = !empty($client->vendedor_nombre) ? $client->vendedor_nombre : null;
+        $nombreLocal = !empty($client->nombre_local) ? $client->nombre_local : null;
 
-        $clientLocalName = $client->nombre_local ? " - " . $client->nombre_local : '';
-        $notes = $order->notes ? " - " . $order->notes : '';
-        $descripcion = "$userName - #{$order->id} - $branchRoute - $branchName$clientLocalName$notes";
+        $descripcion = "Pedido #{$order->id}";
+        if (!empty($nombreLocal)) {
+            $descripcion .= " - Local: {$nombreLocal}";
+        }
+        if (!empty($branchName) && $branchName !== 'N/A') {
+            $descripcion .= " - Sucursal: {$branchName}";
+        }
+        $descripcion .= " - Ruta: {$branchRoute} - Atendido por: {$userName}";
+        if ($vendedorAsignado) {
+            $descripcion .= " - Vendedor: {$vendedorAsignado}";
+        }
+        if (!empty(trim($order->notes ?? ''))) {
+            $descripcion .= " - Obs: " . trim($order->notes);
+        }
 
-        if (mb_strlen($descripcion) > 250) {
-            $descripcion = mb_substr($descripcion, 0, 247) . '...';
+        $personaData = $this->resolveContificoPersonaData($client);
+        $tipoPersona = !empty($personaData['tipo']) ? $personaData['tipo'] : 'N';
+
+        $clientPayload = [
+            'tipo' => $tipoPersona,
+            'razon_social' => $client->name,
+            'es_cliente' => true,
+            'direccion' => !empty($client->address) ? $client->address : 'N/A',
+            'telefonos' => $client->phone ?? '',
+            'email' => !empty($client->email) ? $client->email : 'notiene@mail.com'
+        ];
+        if (!empty($personaData['cedula'])) {
+            $clientPayload['cedula'] = $personaData['cedula'];
+        }
+        if (!empty($personaData['ruc'])) {
+            $clientPayload['ruc'] = $personaData['ruc'];
         }
 
         $payload = [
@@ -127,26 +177,20 @@ class ContificoService
             'tipo_documento' => $isDirect ? 'FAC' : 'PRE',
             'tipo_registro' => 'CLI',
             'estado' => 'P',
-            'referencia' => $branchName,
-            'cliente' => [
-                'cedula' => $client->identification_type === 'Cedula' ? $client->identification : null,
-                'ruc' => $client->identification_type === 'RUC' ? $client->identification : null,
-                'razon_social' => $client->name,
-                'tipo' => $tipoPersona,
-                'es_cliente' => true,
-                'direccion' => $client->address ?? 'N/A',
-                'telefonos' => $client->phone ?? '',
-                'email' => $client->email ?? 'notiene@mail.com'
-            ],
+            'referencia' => $branchName ?? 'N/A',
+            'cliente' => $clientPayload,
             'descripcion' => $descripcion,
             'subtotal_0' => 0.00,
             'subtotal_12' => 0.00,
             'iva' => 0.00,
             'total' => (float)$order->total,
-            'plazo' => (int)($order->credit_days ?? 0),
-            'unidad' => 'd',
+            'cobros' => [],
             'detalles' => []
         ];
+
+        if (!empty($client->vendedor_id)) {
+            $payload['vendedor_id'] = $client->vendedor_id;
+        }
 
         if ($isDirect) {
             $invoiceDetails = $this->getLastInvoiceDetails();
@@ -166,7 +210,6 @@ class ContificoService
             $ivaPercent = (int)$prod->tax_percentage;
             $baseCero = 0;
             $baseGravable = 0;
-            $taxAmount = 0;
 
             if ($ivaPercent > 0) {
                 $baseGravable = (float)$item->subtotal;
@@ -196,7 +239,12 @@ class ContificoService
         $finalTotal = round($sub0 + $sub12 + $totalIva, 2);
         $payload['total'] = $finalTotal;
 
+        // En la API V1, no se deben enviar cobros automáticos en el payload inicial para evitar duplicidades
+        // (el efectivo se omite y el crédito 'OT' no es soportado por el servicio de cobros).
+        $payload['cobros'] = [];
+
         try {
+            Log::info("Enviando documento a Contifico para Pedido #{$order->id}: " . json_encode($payload));
             $response = $this->getClient()->post($this->baseUrl . 'documento/', $payload);
             
             if ($response->successful()) {
@@ -219,10 +267,10 @@ class ContificoService
             }
 
             $errorMsg = "Error de Contifico (Código {$response->status()}): " . $response->body();
-            Log::error("Error creating preinvoice for Order #{$order->id}: " . $errorMsg);
+            Log::error("Error enviando documento a Contifico para Pedido #{$order->id}: {$errorMsg} | Payload enviado: " . json_encode($payload));
             throw new \Exception($errorMsg);
         } catch (\Exception $e) {
-            Log::error("Exception creating preinvoice for Order #{$order->id}: " . $e->getMessage());
+            Log::error("Exception creando prefactura para Pedido #{$order->id}: " . $e->getMessage());
             throw $e;
         }
     }
@@ -307,13 +355,15 @@ class ContificoService
         $methodLower = strtolower($order->payment_method ?? '');
 
         if (str_contains($methodLower, 'efec')) {
-            $formaCobro = 'EF';
+            // NO ENVIAR RECAUDACIONES DE EFECTIVO CON CAJA
+            return;
+        } elseif (str_contains($methodLower, 'cred') || str_contains($methodLower, 'créd')) {
+            // Para crédito, ya se envió en el payload inicial del documento como 'OT'
+            return;
         } elseif (str_contains($methodLower, 'trans') || str_contains($methodLower, 'depo')) {
             $formaCobro = 'TRA';
         } elseif (str_contains($methodLower, 'cheq')) {
             $formaCobro = 'CQ';
-        } elseif (str_contains($methodLower, 'cred') || str_contains($methodLower, 'créd')) {
-            $formaCobro = 'OT';
         } else {
             $formaCobro = null;
         }
@@ -400,4 +450,119 @@ class ContificoService
             return false;
         }
     }
+
+    public function getDocument($contificoDocId)
+    {
+        try {
+            $response = $this->getClient()->get($this->baseUrl . "documento/{$contificoDocId}/");
+            if ($response->successful()) {
+                return $response->json();
+            }
+            Log::error("Error fetching document $contificoDocId from Contifico: " . $response->body());
+            return null;
+        } catch (\Exception $e) {
+            Log::error("Exception fetching document $contificoDocId from Contifico: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Obtiene los documentos pendientes de pago de un cliente por su RUC o Cédula.
+     */
+    public function getPendingDocuments(string $identification)
+    {
+        try {
+            $url = $this->baseUrl . 'registro/documento/?persona_identificacion=' . urlencode($identification) . '&tipo=FAC&tipo_registro=CLI&estado=P';
+            $response = $this->getClient()->get($url);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error("Error fetching pending documents for $identification from Contifico: " . $response->body());
+            return [];
+        } catch (\Exception $e) {
+            Log::error("Exception fetching pending documents for $identification from Contifico: " . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Obtiene las facturas de venta emitidas en Contifico dentro de un rango de fechas.
+     */
+    public function fetchInvoices(?string $from = null, ?string $to = null)
+    {
+        try {
+            $url = $this->baseUrl . 'registro/documento/?tipo_registro=CLI&tipo=FAC';
+            if ($from) {
+                $url .= '&fecha_inicio=' . urlencode($from);
+            }
+            $response = $this->getClient()->get($url);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Error fetching invoices from Contifico: ' . $response->body());
+            return [];
+        } catch (\Exception $e) {
+            Log::error('Exception fetching invoices from Contifico: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Resuelve los datos de la persona (tipo: N/J/I, cedula, ruc) para Contifico según estándar del SRI de Ecuador.
+     */
+    public function resolveContificoPersonaData(Client $client): array
+    {
+        $ident = trim($client->identification ?? '');
+        $cleanIdent = preg_replace('/[^0-9]/', '', $ident);
+        $identType = mb_strtolower(trim($client->identification_type ?? ''));
+
+        if ($cleanIdent === '9999999999' || $cleanIdent === '9999999999999' || str_contains($identType, 'consumidor') || str_contains($identType, 'sin')) {
+            return [
+                'tipo' => 'I',
+                'cedula' => null,
+                'ruc' => null,
+            ];
+        }
+
+        if (strlen($cleanIdent) === 13) {
+            $thirdDigit = (int)$cleanIdent[2];
+            if ($thirdDigit < 6) {
+                // Persona Natural con RUC (3er dígito 0-5) -> tipo 'N'
+                return [
+                    'tipo' => 'N',
+                    'cedula' => substr($cleanIdent, 0, 10),
+                    'ruc' => $cleanIdent,
+                ];
+            } else {
+                // Persona Jurídica / Sociedad (3er dígito 6, 9) -> tipo 'J'
+                return [
+                    'tipo' => 'J',
+                    'cedula' => null,
+                    'ruc' => $cleanIdent,
+                ];
+            }
+        }
+
+        if (strlen($cleanIdent) === 10) {
+            // Cédula de Persona Natural -> tipo 'N'
+            return [
+                'tipo' => 'N',
+                'cedula' => $cleanIdent,
+                'ruc' => null,
+            ];
+        }
+
+        $isCedula = str_contains($identType, 'ced') || str_contains($identType, 'céd') || str_contains($identType, 'pasaporte');
+        return [
+            'tipo' => $isCedula ? 'N' : 'J',
+            'cedula' => $isCedula ? $ident : null,
+            'ruc' => !$isCedula ? $ident : null,
+        ];
+    }
 }
+
+

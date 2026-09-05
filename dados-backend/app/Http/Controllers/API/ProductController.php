@@ -12,13 +12,27 @@ class ProductController extends Controller
     {
         $clientId = $request->query('client_id');
 
-        $products = Product::where('is_visible', true)
+        $query = Product::where('is_visible', true)
             ->where('status', 'A')
             ->where(function ($query) {
                 $query->where('stock', '>', 0)
                     ->orWhere('price', '<=', 0.0001);
-            })
-            ->get(['id', 'name', 'price', 'description', 'stock', 'tax_percentage', 'category_id']);
+            });
+
+        if ($clientId) {
+            $client = \App\Models\Client::find($clientId);
+            if ($client && trim($client->identification) === '0991331859001') {
+                $query->where(function ($q) {
+                    $q->where('name', 'like', '%FUNDAS DE HIELO LISTO 2.5 KG%')
+                        ->orWhere('name', 'like', '%Vasos 16%')
+                        ->orWhere('name', 'like', '%VASOS 16%')
+                        ->orWhere('name', 'like', '%Vasos 16onz%')
+                        ->orWhere('name', 'like', '%VASOS 16ONZ%');
+                });
+            }
+        }
+
+        $products = $query->get(['id', 'name', 'price', 'description', 'stock', 'tax_percentage', 'category_id']);
 
         if ($clientId) {
             $specialPrices = \Illuminate\Support\Facades\DB::table('special_prices')

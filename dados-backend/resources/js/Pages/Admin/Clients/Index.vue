@@ -13,14 +13,41 @@
             </div>
             <div class="flex gap-2 ml-auto">
                 <!-- Sync Contifico -->
-                <button @click="syncClients" :disabled="syncing"
-                    class="flex items-center gap-2 px-4 py-2.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-600 rounded-xl text-sm font-medium transition disabled:opacity-50">
+                <button @click="syncClients(false)" :disabled="syncing"
+                    class="flex items-center gap-2 px-4 py-2.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-600 rounded-xl text-sm font-medium transition disabled:opacity-50 border border-cyan-100">
                     <svg class="w-4 h-4" :class="{ 'animate-spin': syncing }" fill="none" stroke="currentColor"
                         viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                     {{ syncing ? 'Sincronizando...' : 'Sincronizar Contifico' }}
+                </button>
+                <!-- Sync Crédito -->
+                <button @click="syncClients(false, true)" :disabled="syncing"
+                    class="flex items-center gap-2 px-4 py-2.5 bg-violet-50 hover:bg-violet-100 text-violet-600 rounded-xl text-sm font-medium transition disabled:opacity-50 border border-violet-100"
+                    title="Sincronizar días y cupo de crédito desde Contifico">
+                    <svg class="w-4 h-4 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                    Sincronizar Crédito
+                </button>
+                <!-- Sync Vendedores -->
+                <button @click="syncClients(false, false, true)" :disabled="syncing"
+                    class="flex items-center gap-2 px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-xl text-sm font-medium transition disabled:opacity-50 border border-amber-200"
+                    title="Sincronizar vendedores asignados desde Contifico">
+                    <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    Sincronizar Vendedores
+                </button>
+                <!-- Sync Inactivos -->
+                <button @click="syncClients(true, false)" :disabled="syncing"
+                    class="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-sm font-medium transition disabled:opacity-50 border border-slate-200"
+                    title="Sincronizar únicamente clientes inactivos desde Contifico">
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    Sincronizar Inactivos
                 </button>
                 <!-- Import Excel -->
                 <button @click="showImport = true"
@@ -51,7 +78,7 @@
         </div>
 
         <!-- Table -->
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden overflow-x-auto">
             <table class="w-full">
                 <thead class="bg-slate-50 border-b border-slate-100">
                     <tr>
@@ -60,7 +87,10 @@
                         <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Nombre Local</th>
                         <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">RUC /
                             Identificación</th>
+                        <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Vendedor Asignado</th>
                         <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Sucursales</th>
+                        <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Crédito</th>
+                        <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Estado</th>
                         <th class="text-left text-xs font-semibold text-slate-500 uppercase px-6 py-3">Email</th>
                         <th class="px-6 py-3"></th>
                     </tr>
@@ -80,10 +110,30 @@
                                 ({{ client.identification_type }})
                             </span>
                         </td>
+                        <td class="px-6 py-3.5 text-sm">
+                            <span v-if="client.vendedor_nombre" class="font-medium text-slate-700">
+                                {{ client.vendedor_nombre }}
+                            </span>
+                            <span v-else class="text-slate-400">—</span>
+                        </td>
                         <td class="px-6 py-3.5">
                             <span
                                 class="inline-flex items-center px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-600 text-xs font-semibold">
                                 {{ client.branches_count }} local(es)
+                            </span>
+                        </td>
+                        <td class="px-6 py-3.5 text-sm">
+                            <div v-if="client.credit_limit || client.credit_days">
+                                <p class="font-medium text-slate-800">${{ Number(client.credit_limit || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</p>
+                                <p class="text-xs text-slate-400">{{ client.credit_days || 0 }} días</p>
+                            </div>
+                            <span v-else class="text-slate-400">—</span>
+                        </td>
+                        <td class="px-6 py-3.5">
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                                :class="client.is_active !== false ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'">
+                                <span class="w-1.5 h-1.5 rounded-full" :class="client.is_active !== false ? 'bg-emerald-500' : 'bg-red-500'"></span>
+                                {{ client.is_active !== false ? 'ACTIVO' : 'INACTIVO' }}
                             </span>
                         </td>
                         <td class="px-6 py-3.5 text-sm text-slate-500">{{ client.email ?? '—' }}</td>
@@ -109,30 +159,13 @@
                         </td>
                     </tr>
                     <tr v-if="!clients.data.length">
-                        <td colspan="6" class="px-6 py-10 text-center text-slate-400 text-sm">No hay clientes</td>
+                        <td colspan="9" class="px-6 py-10 text-center text-slate-400 text-sm">No hay clientes</td>
                     </tr>
                 </tbody>
             </table>
 
             <!-- Pagination -->
-            <div v-if="clients.last_page > 1"
-                class="px-6 py-4 border-t border-slate-50 flex items-center justify-between text-sm text-slate-500">
-                <span>Mostrando {{ clients.from }}–{{ clients.to }} de {{ clients.total }}</span>
-                <div class="flex gap-1">
-                    <template v-for="(link, index) in clients.links" :key="index">
-                        <span v-if="link.url === null"
-                            class="px-3 py-1.5 rounded-lg text-slate-400 cursor-not-allowed select-none text-xs"
-                            v-html="link.label">
-                        </span>
-                        <Link v-else
-                            :href="link.url"
-                            class="px-3 py-1.5 rounded-lg transition text-xs"
-                            :class="link.active ? 'bg-cyan-500 text-white font-medium' : 'hover:bg-slate-100 text-slate-600'"
-                            v-html="link.label">
-                        </Link>
-                    </template>
-                </div>
-            </div>
+            <Pagination :data="clients" />
         </div>
 
         <!-- Import modal -->
@@ -140,8 +173,9 @@
             class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
                 <h3 class="text-lg font-semibold text-slate-800 mb-4">Importar Clientes desde Excel</h3>
-                <p class="text-slate-500 text-sm mb-4">El archivo debe tener las columnas: <strong>TIPO, IDENTIFICACION,
-                        CODIGO, Persona, Nombre Local, SUCURSALES, Ruta</strong></p>
+                <p class="text-slate-500 text-sm mb-4">
+                    Formatos de columna soportados: <strong>RUC, Cédula, Razón Social, Nombre Comercial, Monto Crédito, Días Crédito, CLI_Nombre Loca, CLI_Correo Sucu</strong> (o formato estándar: IDENTIFICACION, Persona, SUCURSALES).
+                </p>
                 <form @submit.prevent="submitImport">
                     <input type="file" ref="fileInput" accept=".xlsx,.xls,.csv"
                         class="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm mb-4" required />
@@ -243,6 +277,7 @@
 import { ref } from 'vue';
 import { Link, router, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
+import Pagination from '@/Components/Pagination.vue';
 
 const props = defineProps({ clients: Object, filters: Object });
 const search = ref(props.filters?.search ?? '');
@@ -259,9 +294,9 @@ function doSearch() {
     }, 400);
 }
 
-function syncClients() {
+function syncClients(onlyInactive = false, onlyCredit = false, onlyVendor = false) {
     syncing.value = true;
-    router.post(route('admin.clients.sync'), {}, {
+    router.post(route('admin.clients.sync'), { inactive: onlyInactive, credit: onlyCredit, vendedor: onlyVendor }, {
         onFinish: () => { syncing.value = false; }
     });
 }

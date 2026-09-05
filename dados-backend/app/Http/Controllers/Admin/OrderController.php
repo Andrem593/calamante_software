@@ -49,8 +49,17 @@ class OrderController extends Controller
             });
         }
 
+        $orders = $query->paginate(20)->withQueryString();
+        $orders->appends([
+            'from' => $from ? $from->toDateString() : '',
+            'to' => $to ? $to->toDateString() : '',
+            'status' => $request->status ?? '',
+            'seller' => $request->seller ?? '',
+            'search' => $request->search ?? '',
+        ]);
+
         return Inertia::render('Admin/Orders/Index', [
-            'orders' => $query->paginate(20)->withQueryString(),
+            'orders' => $orders,
             'filters' => [
                 'status' => $request->status ?? '',
                 'from' => $from ? $from->toDateString() : null,
@@ -104,6 +113,7 @@ class OrderController extends Controller
 
         return Inertia::render('Admin/Orders/Map', [
             'orders' => $orders,
+            'google_maps_api_key' => \App\Models\Setting::get('GOOGLE_MAPS_API_KEY') ?: env('GOOGLE_MAPS_API_KEY'),
             'filters' => [
                 'from' => $from,
                 'to' => $to,
@@ -121,6 +131,20 @@ class OrderController extends Controller
                 $contifico = app(\App\Services\ContificoService::class);
                 $statusData = $contifico->getDocumentStatus($order->contifico_id);
                 $contificoStatus = $statusData['estado'] ?? null;
+
+                if ($contificoStatus === 'Autorizado' && ($order->status !== 'invoiced' || !$order->is_invoiced || $order->is_preinvoiced)) {
+                    $order->update([
+                        'is_invoiced' => true,
+                        'is_preinvoiced' => false,
+                        'status' => 'invoiced',
+                    ]);
+
+                    OrderTracking::create([
+                        'order_id' => $order->id,
+                        'status' => 'info',
+                        'details' => 'El pedido fue actualizado automáticamente a Factura y estado Facturado tras detectar la autorización en el SRI.',
+                    ]);
+                }
             } catch (\Exception $e) {
                 \Log::error("Error loading Contifico status for Order #{$order->id}: " . $e->getMessage());
             }
@@ -132,13 +156,17 @@ class OrderController extends Controller
         ]);
     }
 
-    public function exportPdf(Order $order)
+    public function exportPdf(Order $order, Request $request)
     {
         $order->load(['client', 'branch', 'user', 'items.product']);
 
         $pdf = Pdf::loadView('pdf.order-pdf', compact('order'));
 
-        return $pdf->download("pedido-{$order->id}.pdf");
+        if ($request->has('download')) {
+            return $pdf->download("pedido-{$order->id}.pdf");
+        }
+
+        return $pdf->stream("pedido-{$order->id}.pdf");
     }
 
     public function syncContifico(Order $order)

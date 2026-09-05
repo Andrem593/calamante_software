@@ -1,0 +1,4 @@
+storePassword=TU_CONTRASEÑA_DE_KEYSTORE
+keyPassword=TU_CONTRASEÑA_DE_CLAVE
+keyAlias=upload
+storeFile=upload-keystore.jks

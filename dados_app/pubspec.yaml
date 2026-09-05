@@ -1,7 +1,7 @@
 name: dados_app
 description: App de toma de pedidos para DADOS.
 publish_to: "none"
-version: 1.0.3+4
+version: 1.0.9+10
 
 environment:
   sdk: ">=3.2.0 <4.0.0"
@@ -19,6 +19,9 @@ dependencies:
   intl: ^0.19.0
   signature: ^6.3.0
   url_launcher: ^6.3.2
+  sqflite: ^2.3.2
+  path: ^1.9.0
+  connectivity_plus: ^6.0.3
 
 dev_dependencies:
   flutter_test:

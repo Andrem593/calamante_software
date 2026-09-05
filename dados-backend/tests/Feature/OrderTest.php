@@ -119,6 +119,42 @@ class OrderTest extends TestCase
         $this->assertEquals(0.0, $prod2WithClient['discount_percentage']);
     }
 
+    public function test_get_products_for_atimasa_client_filters_only_allowed_products()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $atimasa = Client::create([
+            'name' => 'ATIMASA',
+            'identification' => '0991331859001',
+            'email' => 'atimasa@test.com'
+        ]);
+
+        $normalClient = Client::create([
+            'name' => 'Cliente Normal',
+            'identification' => '1234567890001',
+            'email' => 'normal@test.com'
+        ]);
+
+        $p1 = Product::create(['name' => 'FUNDAS DE HIELO LISTO 2.5 KG', 'price' => 0.60, 'stock' => 10, 'is_visible' => true, 'status' => 'A']);
+        $p2 = Product::create(['name' => 'FUNDAS DE HIELO 3.5 KG', 'price' => 0.80, 'stock' => 10, 'is_visible' => true, 'status' => 'A']);
+        $p3 = Product::create(['name' => 'VASOS 16ONZ', 'price' => 1.50, 'stock' => 10, 'is_visible' => true, 'status' => 'A']);
+
+        // For ATIMASA, p1 and p3 should return
+        $resAtimasa = $this->getJson("/api/products?client_id={$atimasa->id}");
+        $resAtimasa->assertStatus(200);
+        $dataAtimasa = $resAtimasa->json();
+        $this->assertCount(2, $dataAtimasa);
+        $names = array_column($dataAtimasa, 'name');
+        $this->assertContains('FUNDAS DE HIELO LISTO 2.5 KG', $names);
+        $this->assertContains('VASOS 16ONZ', $names);
+
+        // For normal client, all three products should return
+        $resNormal = $this->getJson("/api/products?client_id={$normalClient->id}");
+        $resNormal->assertStatus(200);
+        $this->assertCount(3, $resNormal->json());
+    }
+
     public function test_admin_sync_contifico_successfully()
     {
         $admin = User::factory()->create(['role' => 'admin']);
@@ -780,5 +816,370 @@ class OrderTest extends TestCase
             'email' => 'new@email.com',
         ]);
     }
+
+    public function test_inactive_client_hidden_from_api()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $activeClient = Client::create([
+            'name' => 'Cliente Activo',
+            'identification' => '1111111111001',
+            'email' => 'active@client.com',
+            'is_active' => true,
+        ]);
+
+        $inactiveClient = Client::create([
+            'name' => 'Cliente Inactivo',
+            'identification' => '2222222222001',
+            'email' => 'inactive@client.com',
+            'is_active' => false,
+        ]);
+
+        $resIndex = $this->getJson('/api/clients');
+        $resIndex->assertStatus(200);
+        $idsIndex = collect($resIndex->json())->pluck('id')->toArray();
+        $this->assertContains($activeClient->id, $idsIndex);
+        $this->assertNotContains($inactiveClient->id, $idsIndex);
+
+        $resSearch = $this->getJson('/api/clients/search?q=Cliente');
+        $resSearch->assertStatus(200);
+        $idsSearch = collect($resSearch->json())->pluck('id')->toArray();
+        $this->assertContains($activeClient->id, $idsSearch);
+        $this->assertNotContains($inactiveClient->id, $idsSearch);
+    }
+
+    public function test_sync_clients_credit_limit_and_days()
+    {
+        $mockContifico = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico->method('fetchClients')->willReturn([
+            'results' => [
+                [
+                    'id' => 'yBXdLwjPqtRJgbJZ',
+                    'tipo' => 'J',
+                    'es_cliente' => true,
+                    'ruc' => '0991331859001',
+                    'razon_social' => 'ATIMASA S.A',
+                    'nombre_comercial' => 'ATIMASA S.A',
+                    'email' => 'felectronicasp@primax.com.ec',
+                    'dias_credito' => '30',
+                    'cupo_credito' => '50000.00',
+                ]
+            ]
+        ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico);
+
+        $this->artisan('sync:contifico-clients')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('clients', [
+            'identification' => '0991331859001',
+            'credit_limit' => 50000.00,
+            'credit_days' => 30,
+        ]);
+    }
+
+    public function test_sync_clients_vendor_assigned()
+    {
+        $mockContifico = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico->method('fetchClients')->willReturn([
+            'results' => [
+                [
+                    'id' => 'XKdwRYZ6xSGD4bgW',
+                    'tipo' => 'N',
+                    'es_cliente' => true,
+                    'cedula' => '1204562324',
+                    'razon_social' => 'CHALEN VELASCO JOSE ANTONIO',
+                    'vendedor_asignado' => [
+                        'id' => 'gDGe72jX2sAO0dn2',
+                        'nombre' => 'Merchan Castañeda Ciro Enrique'
+                    ]
+                ]
+            ]
+        ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico);
+
+        $this->artisan('sync:contifico-clients')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('clients', [
+            'identification' => '1204562324',
+            'vendedor_id' => 'gDGe72jX2sAO0dn2',
+            'vendedor_nombre' => 'Merchan Castañeda Ciro Enrique',
+        ]);
+    }
+
+    public function test_create_preinvoice_includes_vendedor_assigned()
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            'https://api.contifico.com/sistema/api/v1/documento/' => \Illuminate\Support\Facades\Http::response(['id' => 'doc-123'], 201)
+        ]);
+
+        \App\Models\Setting::set('CONTIFICO_API_KEY', 'test-key');
+
+        $client = Client::create([
+            'name' => 'Cliente Con Vendedor',
+            'identification' => '1204562324',
+            'identification_type' => 'Cedula',
+            'vendedor_id' => 'gDGe72jX2sAO0dn2',
+            'vendedor_nombre' => 'Merchan Castañeda Ciro Enrique',
+        ]);
+
+        $user = User::factory()->create();
+
+        $order = Order::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'total' => 100.0,
+            'status' => 'pending',
+            'payment_method' => 'Efectivo',
+            'is_invoiced' => false,
+        ]);
+
+        $product = Product::create([
+            'name' => 'Producto Test',
+            'price' => 100.0,
+            'stock' => 10,
+            'contifico_id' => 'prod-123',
+            'tax_percentage' => 0,
+        ]);
+
+        $order->items()->create([
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 100.0,
+            'subtotal' => 100.0,
+        ]);
+
+        $contificoService = new \App\Services\ContificoService();
+        $res = $contificoService->createPreinvoice($order);
+
+        $this->assertNotNull($res);
+        $this->assertEquals('doc-123', $res['id']);
+
+        \Illuminate\Support\Facades\Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            $data = $request->data();
+            return isset($data['vendedor_id']) &&
+                $data['vendedor_id'] === 'gDGe72jX2sAO0dn2';
+        });
+    }
+
+    public function test_create_preinvoice_includes_nombre_local_and_notes_in_description()
+    {
+        \Illuminate\Support\Facades\Http::fake([
+            'https://api.contifico.com/sistema/api/v1/documento/' => \Illuminate\Support\Facades\Http::response(['id' => 'doc-456'], 201)
+        ]);
+
+        \App\Models\Setting::set('CONTIFICO_API_KEY', 'test-key');
+
+        $client = Client::create([
+            'name' => 'Cliente Con Local',
+            'nombre_local' => 'Supermercado El Sol',
+            'identification' => '0912345678',
+            'identification_type' => 'Cedula',
+        ]);
+
+        $user = User::factory()->create(['name' => 'Vendedor Test']);
+
+        $branch = \App\Models\Branch::create([
+            'client_id' => $client->id,
+            'name' => 'Sucursal Centro',
+            'route' => 'Ruta 1',
+        ]);
+
+        $order = Order::create([
+            'user_id' => $user->id,
+            'client_id' => $client->id,
+            'branch_id' => $branch->id,
+            'total' => 50.0,
+            'status' => 'pending',
+            'payment_method' => 'Efectivo',
+            'notes' => 'Entregar por la tarde en bodega 2',
+            'is_invoiced' => false,
+        ]);
+
+        $product = Product::create([
+            'name' => 'Producto Test',
+            'price' => 50.0,
+            'stock' => 10,
+            'contifico_id' => 'prod-456',
+            'tax_percentage' => 0,
+        ]);
+
+        $order->items()->create([
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'price' => 50.0,
+            'subtotal' => 50.0,
+        ]);
+
+        $contificoService = new \App\Services\ContificoService();
+        $res = $contificoService->createPreinvoice($order);
+
+        $this->assertNotNull($res);
+
+        \Illuminate\Support\Facades\Http::assertSent(function (\Illuminate\Http\Client\Request $request) {
+            $data = $request->data();
+            $descripcion = $data['descripcion'] ?? '';
+            return str_contains($descripcion, 'Local: Supermercado El Sol') &&
+                   str_contains($descripcion, 'Sucursal: Sucursal Centro') &&
+                   str_contains($descripcion, 'Obs: Entregar por la tarde en bodega 2');
+        });
+    }
+
+    public function test_admin_can_sync_vendor_assigned_clients_via_route()
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        $mockContifico = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico->method('fetchClients')->willReturn([
+            'results' => [
+                [
+                    'id' => 'XKdwRYZ6xSGD4bgW',
+                    'tipo' => 'N',
+                    'es_cliente' => true,
+                    'cedula' => '1204562324',
+                    'razon_social' => 'CHALEN VELASCO JOSE ANTONIO',
+                    'vendedor_asignado' => [
+                        'id' => 'gDGe72jX2sAO0dn2',
+                        'nombre' => 'Merchan Castañeda Ciro Enrique'
+                    ]
+                ]
+            ]
+        ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico);
+
+        $response = $this->post('/admin/clients/sync', ['vendedor' => true]);
+        $response->assertRedirect();
+        $response->assertSessionHas('success');
+
+        $this->assertDatabaseHas('clients', [
+            'identification' => '1204562324',
+            'vendedor_id' => 'gDGe72jX2sAO0dn2',
+            'vendedor_nombre' => 'Merchan Castañeda Ciro Enrique',
+        ]);
+    }
+
+    public function test_sync_vendor_only_updates_vendor_fields_and_preserves_other_fields()
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        // Client has custom local name and email
+        $client = Client::create([
+            'name' => 'Nombre Local Modificado',
+            'identification' => '1204562324',
+            'identification_type' => 'Cedula',
+            'email' => 'mi-correo-custom@test.com',
+            'vendedor_id' => null,
+            'vendedor_nombre' => null,
+        ]);
+
+        $mockContifico = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico->method('fetchClients')->willReturn([
+            'results' => [
+                [
+                    'id' => 'XKdwRYZ6xSGD4bgW',
+                    'tipo' => 'N',
+                    'es_cliente' => true,
+                    'cedula' => '1204562324',
+                    'razon_social' => 'NOMBRE DE CONTIFICO DIFERENTE',
+                    'email' => 'contifico-email@test.com',
+                    'vendedor_asignado' => [
+                        'id' => 'gDGe72jX2sAO0dn2',
+                        'nombre' => 'Merchan Castañeda Ciro Enrique'
+                    ]
+                ]
+            ]
+        ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico);
+
+        $response = $this->post('/admin/clients/sync', ['vendedor' => true]);
+        $response->assertRedirect();
+
+        // Vendor should be updated, but name and email must be preserved!
+        $this->assertDatabaseHas('clients', [
+            'id' => $client->id,
+            'name' => 'Nombre Local Modificado',
+            'email' => 'mi-correo-custom@test.com',
+            'vendedor_id' => 'gDGe72jX2sAO0dn2',
+            'vendedor_nombre' => 'Merchan Castañeda Ciro Enrique',
+        ]);
+    }
+
+    public function test_admin_can_manually_edit_client_status_and_vendor()
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        $client = Client::create([
+            'name' => 'Cliente Para Editar',
+            'identification' => '0990000000001',
+            'identification_type' => 'RUC',
+            'is_active' => true,
+        ]);
+
+        $response = $this->put("/admin/clients/{$client->id}", [
+            'name' => 'Cliente Editado Manualmente',
+            'identification_type' => 'RUC',
+            'identification' => '0990000000001',
+            'is_active' => false,
+            'vendedor_id' => 'vendedor-custom-99',
+            'vendedor_nombre' => 'Carlos Vendedor Manual',
+        ]);
+
+        $response->assertRedirect();
+        $response->assertSessionHas('success');
+
+        $this->assertDatabaseHas('clients', [
+            'id' => $client->id,
+            'name' => 'Cliente Editado Manualmente',
+            'is_active' => false,
+            'vendedor_id' => 'vendedor-custom-99',
+            'vendedor_nombre' => 'Carlos Vendedor Manual',
+        ]);
+    }
+
+    public function test_resolve_contifico_persona_data_for_natural_person_with_ruc_and_company_ruc()
+    {
+        $contificoService = new \App\Services\ContificoService();
+
+        // 1. Natural Person with RUC (e.g., 1801694140001 -> 3rd digit is 0)
+        $naturalClient = new Client([
+            'name' => 'MANTILLA FREIRE AMADA MARLEM',
+            'identification' => '1801694140001',
+            'identification_type' => 'RUC',
+        ]);
+        $resNatural = $contificoService->resolveContificoPersonaData($naturalClient);
+        $this->assertEquals('N', $resNatural['tipo']);
+        $this->assertEquals('1801694140', $resNatural['cedula']);
+        $this->assertEquals('1801694140001', $resNatural['ruc']);
+
+        // 2. Company / Juridical Person (e.g., 0991331859001 -> 3rd digit is 9)
+        $companyClient = new Client([
+            'name' => 'ATIMASA S.A.',
+            'identification' => '0991331859001',
+            'identification_type' => 'RUC',
+        ]);
+        $resCompany = $contificoService->resolveContificoPersonaData($companyClient);
+        $this->assertEquals('J', $resCompany['tipo']);
+        $this->assertNull($resCompany['cedula']);
+        $this->assertEquals('0991331859001', $resCompany['ruc']);
+
+        // 3. Natural Person with Cedula (10 digits)
+        $cedulaClient = new Client([
+            'name' => 'JUAN PEREZ',
+            'identification' => '1801694140',
+            'identification_type' => 'CEDULA',
+        ]);
+        $resCedula = $contificoService->resolveContificoPersonaData($cedulaClient);
+        $this->assertEquals('N', $resCedula['tipo']);
+        $this->assertEquals('1801694140', $resCedula['cedula']);
+        $this->assertNull($resCedula['ruc']);
+    }
 }
+
+
+
 

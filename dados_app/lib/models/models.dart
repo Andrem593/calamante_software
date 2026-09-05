@@ -27,6 +27,9 @@ class Client {
   final String? identificationType;
   final String? nombreLocal;
   final String? companyName;
+  final String? phone;
+  final double? creditLimit;
+  final int? creditDays;
   final List<Branch> branches;
 
   Client({
@@ -38,6 +41,9 @@ class Client {
     this.identificationType,
     this.nombreLocal,
     this.companyName,
+    this.phone,
+    this.creditLimit,
+    this.creditDays,
     this.branches = const [],
   });
 
@@ -51,12 +57,107 @@ class Client {
       identificationType: json['identification_type'],
       nombreLocal: json['nombre_local'] ?? json['nombreLocal'],
       companyName: json['company_name'] ?? json['companyName'],
+      phone: json['phone'],
+      creditLimit: json['credit_limit'] != null ? double.tryParse(json['credit_limit'].toString()) : null,
+      creditDays: json['credit_days'] != null ? int.tryParse(json['credit_days'].toString()) : null,
       branches: json['branches'] != null
           ? (json['branches'] as List).map((b) => Branch.fromJson(b)).toList()
           : [],
     );
   }
 }
+
+class PendingDocument {
+  final String? id;
+  final String? documento;
+  final String? fechaEmision;
+  final String? fechaVencimiento;
+  final double total;
+  final double saldo;
+  final bool isOverdue;
+  final int daysOverdue;
+
+  PendingDocument({
+    this.id,
+    this.documento,
+    this.fechaEmision,
+    this.fechaVencimiento,
+    required this.total,
+    required this.saldo,
+    this.isOverdue = false,
+    this.daysOverdue = 0,
+  });
+
+  factory PendingDocument.fromJson(Map<String, dynamic> json) {
+    return PendingDocument(
+      id: json['id'],
+      documento: json['documento'],
+      fechaEmision: json['fecha_emision'],
+      fechaVencimiento: json['fecha_vencimiento'],
+      total: double.tryParse(json['total'].toString()) ?? 0.0,
+      saldo: double.tryParse(json['saldo'].toString()) ?? 0.0,
+      isOverdue: json['is_overdue'] == true,
+      daysOverdue: json['days_overdue'] != null ? int.tryParse(json['days_overdue'].toString()) ?? 0 : 0,
+    );
+  }
+}
+
+class ClientCreditStatus {
+  final int clientId;
+  final String? identification;
+  final double? creditLimit;
+  final int? creditDays;
+  final bool hasCreditConfigured;
+  final double totalPendiente;
+  final double totalVencido;
+  final int countPendientes;
+  final int countVencidos;
+  final double? availableCredit;
+  final List<PendingDocument> documents;
+
+  ClientCreditStatus({
+    required this.clientId,
+    this.identification,
+    this.creditLimit,
+    this.creditDays,
+    required this.hasCreditConfigured,
+    required this.totalPendiente,
+    required this.totalVencido,
+    required this.countPendientes,
+    required this.countVencidos,
+    this.availableCredit,
+    required this.documents,
+  });
+
+  factory ClientCreditStatus.fromJson(Map<String, dynamic> json) {
+    return ClientCreditStatus(
+      clientId: json['client_id'],
+      identification: json['identification'],
+      creditLimit: json['credit_limit'] != null ? double.tryParse(json['credit_limit'].toString()) : null,
+      creditDays: json['credit_days'] != null ? int.tryParse(json['credit_days'].toString()) : null,
+      hasCreditConfigured: json['has_credit_configured'] == true,
+      totalPendiente: double.tryParse(json['total_pendiente'].toString()) ?? 0.0,
+      totalVencido: double.tryParse(json['total_vencido'].toString()) ?? 0.0,
+      countPendientes: json['count_pendientes'] ?? 0,
+      countVencidos: json['count_vencidos'] ?? 0,
+      availableCredit: json['available_credit'] != null ? double.tryParse(json['available_credit'].toString()) : null,
+      documents: json['documents'] != null
+          ? (json['documents'] as List<dynamic>).map((d) => PendingDocument.fromJson(d)).toList()
+          : [],
+    );
+  }
+
+  bool get hasOverdueInvoices => countVencidos > 0 || totalVencido > 0;
+
+  bool get isCreditExhausted =>
+      creditLimit != null && creditLimit! > 0 && (availableCredit ?? 0) <= 0;
+
+  bool get isLowCredit {
+    if (creditLimit == null || creditLimit! <= 0 || availableCredit == null) return false;
+    return (availableCredit! > 0) && (availableCredit! <= (creditLimit! * 0.20) || availableCredit! <= 100);
+  }
+}
+
 
 class Category {
   final int id;

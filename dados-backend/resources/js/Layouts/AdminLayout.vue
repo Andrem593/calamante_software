@@ -1,5 +1,12 @@
 <template>
     <div class="min-h-screen flex bg-slate-50 font-[Inter]">
+        <!-- Backdrop (mobile only) -->
+        <div
+            v-if="sidebarOpen"
+            @click="sidebarOpen = false"
+            class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-20 lg:hidden transition-all duration-300"
+        ></div>
+
         <!-- Sidebar -->
         <aside
             class="flex flex-col w-64 bg-gradient-to-b from-slate-900 to-slate-800 shadow-2xl fixed h-full z-30 transition-all duration-300"
@@ -27,13 +34,22 @@
                 <NavItem :href="route('admin.clients.index')" icon="users" label="Clientes y Sucursales" />
                 <NavItem :href="route('admin.special-prices.index')" icon="tag" label="Precios Especiales" />
                 <NavItem :href="route('admin.products.index')" icon="cube" label="Productos" />
+                <NavItem :href="route('admin.equipments.index')" icon="cube" label="Catálogo de Equipos" />
                 <NavItem :href="route('admin.users.index')" icon="user-group" label="Usuarios" />
                 <NavItem v-if="$page.props.auth?.user?.role === 'superadmin'" :href="route('admin.settings.index')"
                     icon="cog" label="Configuración" />
 
+                <p class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mt-5 mb-2">Visitas</p>
+                <NavItem :href="route('admin.visits.index')" icon="clipboard-list" label="Listado de Visitas" />
+                <NavItem :href="route('admin.visits.map')" icon="map" label="Recorrido de Visitas" />
+
                 <p class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mt-5 mb-2">Reportes</p>
                 <NavItem :href="route('admin.reports.index')" icon="trending-up" label="Resumen" />
                 <NavItem :href="route('admin.reports.sales')" icon="currency-dollar" label="Ventas" />
+                <NavItem :href="route('admin.reports.presale-direct-sale')" icon="document-text" label="Resumen de ventass" />
+                <NavItem :href="route('admin.reports.active-clients-billing')" icon="chart-bar" label="Promedio Facturación 6M" />
+                <NavItem :href="route('admin.reports.branches-geolocation')" icon="map" label="Geolocalización Sucursales" />
+                <NavItem :href="route('admin.reports.receivables')" icon="credit-card" label="Cartera de Clientes" />
                 <NavItem :href="route('admin.reports.sellers')" icon="user-group" label="Vendedores" />
             </nav>
 
@@ -63,13 +79,15 @@
         </aside>
 
         <!-- Main content -->
-        <div class="flex-1 flex flex-col ml-64">
+        <div
+            class="flex-1 flex flex-col transition-all duration-300"
+            :class="{ 'lg:ml-64': sidebarOpen, 'lg:ml-0': !sidebarOpen }">
             <!-- Top bar -->
             <header
                 class="bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
                 <div class="flex items-center gap-4">
-                    <button @click="sidebarOpen = !sidebarOpen"
-                        class="lg:hidden p-2 rounded-lg text-slate-500 hover:bg-slate-100">
+                    <button @click="toggleSidebar"
+                        class="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M4 6h16M4 12h16M4 18h16" />
@@ -108,14 +126,31 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { usePage, router } from '@inertiajs/vue3';
 import NavItem from '@/Components/NavItem.vue';
 
 defineProps({ title: String });
 
-const sidebarOpen = ref(true);
+const sidebarOpen = ref(false);
 const today = computed(() => new Date().toLocaleDateString('es-EC', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+
+onMounted(() => {
+    const isMobile = window.innerWidth < 1024;
+    if (isMobile) {
+        sidebarOpen.value = false;
+    } else {
+        const saved = localStorage.getItem('sidebar_open');
+        sidebarOpen.value = saved !== null ? saved === 'true' : true;
+    }
+});
+
+function toggleSidebar() {
+    sidebarOpen.value = !sidebarOpen.value;
+    if (window.innerWidth >= 1024) {
+        localStorage.setItem('sidebar_open', sidebarOpen.value.toString());
+    }
+}
 
 function logout() {
     router.post(route('logout'));

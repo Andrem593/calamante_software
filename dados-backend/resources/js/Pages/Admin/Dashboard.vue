@@ -175,7 +175,7 @@
                     <!-- Products Breakdown -->
                     <div>
                         <h4 class="font-semibold text-slate-800 text-sm mb-3">Detalle de Productos Vendidos</h4>
-                        <div class="border border-slate-100 rounded-xl overflow-hidden bg-slate-50/50">
+                        <div class="border border-slate-100 rounded-xl overflow-hidden overflow-x-auto bg-slate-50/50">
                             <table class="w-full text-sm">
                                 <thead class="bg-slate-100 text-slate-600 font-semibold text-[10px] uppercase tracking-wider">
                                     <tr>

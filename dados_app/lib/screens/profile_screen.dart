@@ -246,19 +246,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
       {bool isLogout = false, VoidCallback? onTap}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 15),
-      decoration: BoxDecoration(
+      child: Material(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-      ),
-      child: ListTile(
-        leading:
-            Icon(icon, color: isLogout ? Colors.red : const Color(0xFF03A9F4)),
-        title: Text(label,
-            style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: isLogout ? Colors.red : Colors.black)),
-        trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
-        onTap: onTap,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading:
+              Icon(icon, color: isLogout ? Colors.red : const Color(0xFF03A9F4)),
+          title: Text(label,
+              style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: isLogout ? Colors.red : Colors.black)),
+          trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
+          onTap: onTap,
+        ),
       ),
     );
   }

@@ -8,6 +8,13 @@ class Client extends Model
 {
     protected $guarded = [];
 
+    protected $casts = [
+        'credit_limit' => 'decimal:2',
+        'credit_days' => 'integer',
+        'is_active' => 'boolean',
+    ];
+
+
     public function branches()
     {
         return $this->hasMany(Branch::class);
@@ -16,6 +23,11 @@ class Client extends Model
     public function specialPrices()
     {
         return $this->hasMany(SpecialPrice::class);
+    }
+
+    public function visits()
+    {
+        return $this->hasMany(Visit::class);
     }
 
     public static function mergeClients($sourceId, $targetId)
@@ -39,6 +51,9 @@ class Client extends Model
             // Mover pedidos (orders)
             Order::where('client_id', $sourceId)->update(['client_id' => $targetId]);
 
+            // Mover visitas (visits)
+            Visit::where('client_id', $sourceId)->update(['client_id' => $targetId]);
+
             // Mover precios especiales (special prices), manejando duplicados
             foreach ($source->specialPrices as $price) {
                 $exists = SpecialPrice::where('client_id', $targetId)
@@ -51,8 +66,31 @@ class Client extends Model
                 }
             }
 
+            // Mover equipos del cliente
+            $sourceEquipments = \Illuminate\Support\Facades\DB::table('client_equipment')->where('client_id', $sourceId)->get();
+            foreach ($sourceEquipments as $eq) {
+                $exists = \Illuminate\Support\Facades\DB::table('client_equipment')
+                    ->where('client_id', $targetId)
+                    ->where('branch_id', $eq->branch_id)
+                    ->where('equipment_id', $eq->equipment_id)
+                    ->exists();
+                if (!$exists) {
+                    \Illuminate\Support\Facades\DB::table('client_equipment')->insert([
+                        'client_id' => $targetId,
+                        'branch_id' => $eq->branch_id,
+                        'equipment_id' => $eq->equipment_id
+                    ]);
+                }
+            }
+
             // Eliminar cliente de origen
             $source->delete();
         });
+    }
+
+    public function equipments()
+    {
+        return $this->belongsToMany(Equipment::class, 'client_equipment')
+            ->withPivot('branch_id');
     }
 }

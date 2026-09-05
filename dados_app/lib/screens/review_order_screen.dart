@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:provider/provider.dart';
 import '../services/api_service.dart';
+import '../services/offline_database_service.dart';
+import '../services/sync_service.dart';
 import '../models/models.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:signature/signature.dart';
@@ -49,7 +51,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
   double get subtotal => widget.items.fold(0, (sum, item) {
         final double price = double.parse(item['price'].toString());
         final int quantity = int.parse(item['quantity'].toString());
-        final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
+        final double discount =
+            double.parse((item['discount_percentage'] ?? 0.0).toString());
         final double discountedPrice = price * (1 - discount / 100);
         return sum + (discountedPrice * quantity);
       });
@@ -69,7 +72,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
       );
       final double price = double.parse(item['price'].toString());
       final int quantity = int.parse(item['quantity'].toString());
-      final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
+      final double discount =
+          double.parse((item['discount_percentage'] ?? 0.0).toString());
       final double discountedPrice = price * (1 - discount / 100);
       totalTax += (discountedPrice * quantity) * (product.taxPercentage / 100);
     }
@@ -77,6 +81,163 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
   }
 
   double get total => subtotal + taxes;
+
+  List<dynamic> _equipments = [];
+  List<int> _selectedEquipmentIds = [];
+  bool _loadingEquipments = false;
+
+  Future<void> _loadEquipments() async {
+    final api = context.read<ApiService>();
+    try {
+      final list = await api.getEquipments();
+      if (!mounted) return;
+      setState(() {
+        _equipments = list;
+      });
+    } catch (e) {
+      debugPrint('Error cargando catálogo de equipos: $e');
+    }
+  }
+
+  Future<void> _loadClientEquipments() async {
+    final api = context.read<ApiService>();
+    setState(() {
+      _loadingEquipments = true;
+      _selectedEquipmentIds = [];
+    });
+    try {
+      final branchId = widget.branch?.id;
+      final data =
+          await api.getClientEquipments(widget.client.id, branchId: branchId);
+      if (!mounted) return;
+      setState(() {
+        _selectedEquipmentIds = data.map((j) => j['id'] as int).toList();
+      });
+    } catch (e) {
+      debugPrint('Error cargando equipos del cliente: $e');
+    } finally {
+      if (mounted) setState(() => _loadingEquipments = false);
+    }
+  }
+
+  Future<void> _openEquipmentModal() async {
+    // Si todavía está cargando, mostrar diálogo de espera
+    if (_loadingEquipments) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 16),
+              Text('Cargando catálogo...'),
+            ],
+          ),
+        ),
+      );
+      while (_loadingEquipments) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    }
+
+    // Si no cargaron (error o vacíos), intentar cargar de nuevo
+    if (_equipments.isEmpty) {
+      await _loadEquipments();
+      if (!mounted) return;
+    }
+
+    final List<int>? result = await showModalBottomSheet<List<int>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EquipmentPickerModal(
+        equipments: List<dynamic>.from(_equipments),
+        initialSelected: List<int>.from(_selectedEquipmentIds),
+      ),
+    );
+
+    if (result != null && mounted) {
+      setState(() => _selectedEquipmentIds = result);
+    }
+  }
+
+  Widget _buildClientEquipmentsSection() {
+    if (_equipments.isEmpty && _loadingEquipments) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return InkWell(
+      onTap: _openEquipmentModal,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFF0F8FF),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.lightBlue.shade200),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.kitchen_outlined,
+                  color: Colors.blue[700], size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Equipos del Cliente',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.blue[900])),
+                  const SizedBox(height: 3),
+                  _loadingEquipments
+                      ? const SizedBox(
+                          height: 14,
+                          width: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          _selectedEquipmentIds.isEmpty
+                              ? 'Toca para registrar equipos'
+                              : '${_selectedEquipmentIds.length} equipo${_selectedEquipmentIds.length == 1 ? '' : 's'} registrado${_selectedEquipmentIds.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: _selectedEquipmentIds.isEmpty
+                                ? Colors.grey[500]
+                                : Colors.blue[700],
+                          ),
+                        ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: Colors.blue[400]),
+          ],
+        ),
+      ),
+    );
+  }
 
   final TextEditingController _requestedByNameCtrl = TextEditingController();
   final TextEditingController _requestedByIdCtrl = TextEditingController();
@@ -90,6 +251,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
       penColor: Colors.black,
       exportBackgroundColor: Colors.white,
     );
+    _loadEquipments();
+    _loadClientEquipments();
   }
 
   @override
@@ -100,7 +263,18 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
     super.dispose();
   }
 
+  Future<void> _clearDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('draft_client_id');
+    await prefs.remove('draft_cart');
+    await prefs.remove('draft_notes');
+    await prefs.remove('draft_address');
+    await prefs.remove('draft_payment_method');
+  }
+
   Future<void> _confirmOrder() async {
+    if (_submitting) return;
+
     if (_requestedByNameCtrl.text.isEmpty || _requestedByIdCtrl.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -127,7 +301,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
         signatureBase64 = base64Encode(signatureBytes);
       }
 
-      await context.read<ApiService>().post('/orders', {
+      final payload = {
         'client_id': widget.client.id,
         'branch_id': widget.branch?.id,
         'branch_email': widget.branchEmail,
@@ -143,31 +317,83 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
         'requested_by_id': _requestedByIdCtrl.text,
         'signature': signatureBase64,
         'delivery_date': widget.deliveryDate?.toIso8601String().split('T')[0],
-      });
+      };
 
-      // Limpiar borradores al confirmar pedido con éxito
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('draft_client_id');
-      await prefs.remove('draft_cart');
-      await prefs.remove('draft_notes');
-      await prefs.remove('draft_address');
-      await prefs.remove('draft_payment_method');
+      final syncService = context.read<SyncService>();
+      final isOnline = syncService.isOnline;
 
-      Navigator.of(context)
-          .pushNamedAndRemoveUntil('/dashboard', (route) => false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('¡Pedido confirmado con éxito!'),
-            backgroundColor: Colors.green),
-      );
+      if (!isOnline) {
+        await OfflineDatabaseService.instance.insertOfflineOrder(
+          payload,
+          clientId: widget.client.id,
+          clientName: widget.client.name,
+          total: total,
+        );
+        await syncService.checkPendingCounts();
+        await _clearDrafts();
+
+        if (!mounted) return;
+        Navigator.of(context)
+            .pushNamedAndRemoveUntil('/dashboard', (route) => false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📱 Guardado localmente (Sin conexión). Se auto-sincronizará al conectarte.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+        return;
+      }
+
+      try {
+        await context.read<ApiService>().post('/orders', payload);
+
+        await context.read<ApiService>().syncClientEquipments(
+            widget.client.id, _selectedEquipmentIds,
+            branchId: widget.branch?.id);
+
+        await _clearDrafts();
+
+        if (!mounted) return;
+        Navigator.of(context)
+            .pushNamedAndRemoveUntil('/dashboard', (route) => false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('¡Pedido confirmado con éxito!'),
+              backgroundColor: Colors.green),
+        );
+      } catch (e) {
+        debugPrint('Error enviando pedido online. Guardando localmente: $e');
+        await OfflineDatabaseService.instance.insertOfflineOrder(
+          payload,
+          clientId: widget.client.id,
+          clientName: widget.client.name,
+          total: total,
+        );
+        await syncService.checkPendingCounts();
+        await _clearDrafts();
+
+        if (!mounted) return;
+        Navigator.of(context)
+            .pushNamedAndRemoveUntil('/dashboard', (route) => false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('📱 Falló la conexión. El pedido fue guardado localmente para auto-sincronización.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text('Error al confirmar: $e'),
-            backgroundColor: Colors.red),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Error al procesar: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
     } finally {
-      setState(() => _submitting = false);
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -195,18 +421,22 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('Productos',
-                        style:
-                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
                     ...widget.items.map((item) {
                       final product = widget.products.firstWhere(
                           (p) => p.id == item['product_id'],
                           orElse: () => Product(
                               id: 0, name: 'Desconocido', price: 0, stock: 0));
-                      final double price = double.parse(item['price'].toString());
-                      final int quantity = int.parse(item['quantity'].toString());
-                      final double discount = double.parse((item['discount_percentage'] ?? 0.0).toString());
-                      final double discountedPrice = price * (1 - discount / 100);
+                      final double price =
+                          double.parse(item['price'].toString());
+                      final int quantity =
+                          int.parse(item['quantity'].toString());
+                      final double discount = double.parse(
+                          (item['discount_percentage'] ?? 0.0).toString());
+                      final double discountedPrice =
+                          price * (1 - discount / 100);
                       final double itemTotal = discountedPrice * quantity;
 
                       return Padding(
@@ -227,14 +457,17 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                                   Row(
                                     children: [
                                       Text('${item['quantity']} unidades',
-                                          style: const TextStyle(color: Colors.grey)),
+                                          style: const TextStyle(
+                                              color: Colors.grey)),
                                       if (discount > 0) ...[
                                         const SizedBox(width: 8),
                                         Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 1),
                                           decoration: BoxDecoration(
                                             color: Colors.amber[100],
-                                            borderRadius: BorderRadius.circular(4),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
                                           ),
                                           child: Text(
                                             '-${discount.toStringAsFixed(1)}%',
@@ -255,16 +488,15 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text(
-                                    '\$${itemTotal.toStringAsFixed(2)}',
+                                Text('\$${itemTotal.toStringAsFixed(2)}',
                                     style: const TextStyle(
-                                        fontSize: 16, fontWeight: FontWeight.bold)),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold)),
                                 if (discount > 0)
                                   Text(
                                     '(\$${discountedPrice.toStringAsFixed(2)} c/u)',
                                     style: const TextStyle(
-                                        color: Colors.grey,
-                                        fontSize: 11),
+                                        color: Colors.grey, fontSize: 11),
                                   ),
                               ],
                             ),
@@ -274,8 +506,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                     }).toList(),
                     const Divider(height: 40),
                     const Text('Detalles del Pedido',
-                        style:
-                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
                     _buildSummaryRow(
                         'Subtotal', '\$${subtotal.toStringAsFixed(2)}'),
@@ -284,8 +516,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                         isTotal: true),
                     const Divider(height: 40),
                     const Text('Ubicación de Entrega',
-                        style:
-                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
                     Container(
                       height: 150,
@@ -316,8 +548,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                     ),
                     const SizedBox(height: 25),
                     const Text('Información del Cliente',
-                        style:
-                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 10),
                     Text(widget.client.name,
                         style: const TextStyle(
@@ -344,6 +576,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                         ],
                       ),
                     ],
+                    const SizedBox(height: 20),
+                    _buildClientEquipmentsSection(),
                     if (widget.notes.isNotEmpty) ...[
                       const SizedBox(height: 15),
                       const Text('Observaciones:',
@@ -353,8 +587,8 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                     ],
                     const Divider(height: 40),
                     const Text('Datos del Solicitante',
-                        style:
-                            TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 15),
                     TextField(
                       controller: _requestedByNameCtrl,
@@ -416,7 +650,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                       width: double.infinity,
                       height: 55,
                       child: ElevatedButton(
-                        onPressed: _confirmOrder,
+                        onPressed: _submitting ? null : _confirmOrder,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF03A9F4),
                           shape: RoundedRectangleBorder(
@@ -454,6 +688,257 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                   fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
                   color: isTotal ? const Color(0xFF03A9F4) : Colors.black)),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Modal reutilizable para seleccionar equipos ───────────────────────────────
+class _EquipmentPickerModal extends StatefulWidget {
+  final List<dynamic> equipments;
+  final List<int> initialSelected;
+
+  const _EquipmentPickerModal({
+    required this.equipments,
+    required this.initialSelected,
+  });
+
+  @override
+  State<_EquipmentPickerModal> createState() => _EquipmentPickerModalState();
+}
+
+class _EquipmentPickerModalState extends State<_EquipmentPickerModal> {
+  late List<int> _selected;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _selected = List<int>.from(widget.initialSelected);
+    _searchCtrl.addListener(
+        () => setState(() => _query = _searchCtrl.text.toLowerCase()));
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<dynamic> get _filtered => widget.equipments.where((eq) {
+        final model = (eq['model'] as String).toLowerCase();
+        final cap = (eq['capacity'] as String).toLowerCase();
+        return model.contains(_query) || cap.contains(_query);
+      }).toList();
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    return DraggableScrollableSheet(
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.5,
+      expand: false,
+      builder: (_, scrollCtrl) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            // Handle
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.kitchen_outlined,
+                        color: Colors.blue[700], size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Equipos del Cliente',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 17)),
+                        Text(
+                            '${_selected.length} seleccionado${_selected.length == 1 ? '' : 's'}',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.blue[600])),
+                      ],
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _selected.clear()),
+                    child: const Text('Limpiar',
+                        style: TextStyle(color: Colors.red)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Search bar
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: TextField(
+                controller: _searchCtrl,
+                decoration: InputDecoration(
+                  hintText: 'Buscar equipo...',
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  contentPadding:
+                      const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            // Equipment list
+            Expanded(
+              child: filtered.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.search_off_rounded,
+                              size: 48, color: Colors.grey[300]),
+                          const SizedBox(height: 8),
+                          Text('No se encontraron equipos',
+                              style: TextStyle(
+                                  color: Colors.grey[500], fontSize: 14)),
+                        ],
+                      ),
+                    )
+                  : ListView.separated(
+                      controller: scrollCtrl,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 8),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, indent: 60),
+                      itemBuilder: (_, i) {
+                        final eq = filtered[i];
+                        final id = eq['id'] as int;
+                        final isSelected = _selected.contains(id);
+                        return Material(
+                          color:
+                              isSelected ? Colors.blue[50] : Colors.transparent,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () => setState(() {
+                              if (isSelected) {
+                                _selected.remove(id);
+                              } else {
+                                _selected.add(id);
+                              }
+                            }),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 12),
+                              child: Row(
+                                children: [
+                                  AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    width: 26,
+                                    height: 26,
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? const Color(0xFF03A9F4)
+                                          : Colors.white,
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? const Color(0xFF03A9F4)
+                                            : Colors.grey[300]!,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: isSelected
+                                        ? const Icon(Icons.check,
+                                            color: Colors.white, size: 16)
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(eq['model'] as String,
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 14)),
+                                        const SizedBox(height: 2),
+                                        Text(eq['capacity'] as String,
+                                            style: TextStyle(
+                                                color: Colors.grey[600],
+                                                fontSize: 12)),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            // Confirm button
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(context, _selected),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF03A9F4),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      elevation: 0,
+                    ),
+                    child: Text(
+                      _selected.isEmpty
+                          ? 'Confirmar sin equipos'
+                          : 'Guardar ${_selected.length} equipo${_selected.length == 1 ? '' : 's'}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

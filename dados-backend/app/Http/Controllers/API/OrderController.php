@@ -142,4 +142,70 @@ class OrderController extends Controller
 
         return $order;
     }
+
+    public function getContificoDocument($contifico_id)
+    {
+        try {
+            $contifico = app(\App\Services\ContificoService::class);
+            $doc = $contifico->getDocument($contifico_id);
+            if (!$doc) {
+                return response()->json(['error' => 'No se pudo obtener el documento de Contifico.'], 404);
+            }
+            return response()->json($doc);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function reportPdf(Request $request)
+    {
+        $tokenStr = $request->query('token');
+        $user = null;
+        if ($tokenStr) {
+            $token = \Laravel\Sanctum\PersonalAccessToken::findToken($tokenStr);
+            if ($token) {
+                $user = $token->tokenable;
+            }
+        }
+        
+        if (!$user) {
+            $user = auth('sanctum')->user();
+        }
+        
+        if (!$user) {
+            return response()->json(['error' => 'Unauthenticated.'], 401);
+        }
+        
+        $query = Order::with(['client'])
+            ->where('user_id', $user->id);
+            
+        if ($request->filled('start_date')) {
+            $query->whereDate('created_at', '>=', $request->start_date);
+        }
+        if ($request->filled('end_date')) {
+            $query->whereDate('created_at', '<=', $request->end_date);
+        }
+        
+        if ($request->filled('status') && $request->status !== 'Todos') {
+            $status = $request->status;
+            if ($status === 'Pendientes') {
+                $query->whereIn('status', ['pending', 'processed']);
+            } else if ($status === 'Completados') {
+                $query->where('status', 'delivered');
+            } else if ($status === 'Cancelados') {
+                $query->where('status', 'cancelled');
+            }
+        }
+        
+        $orders = $query->latest()->get();
+        
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.orders-report-pdf', [
+            'orders' => $orders,
+            'user' => $user,
+            'start_date' => $request->start_date,
+            'end_date' => $request->end_date,
+        ]);
+        
+        return $pdf->stream('reporte-pedidos.pdf');
+    }
 }

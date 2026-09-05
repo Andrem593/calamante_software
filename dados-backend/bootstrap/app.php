@@ -18,6 +18,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'admin' => \App\Http\Middleware\CheckAdminRole::class,
         ]);
+        $middleware->validateCsrfTokens(except: [
+            'admin/visits/export-pdf-map',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

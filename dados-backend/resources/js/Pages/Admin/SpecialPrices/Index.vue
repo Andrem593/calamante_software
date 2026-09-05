@@ -26,7 +26,7 @@
         </div>
 
         <!-- Tabla -->
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden overflow-x-auto">
             <table class="w-full">
                 <thead class="bg-slate-50 border-b border-slate-100">
                     <tr>
@@ -90,24 +90,7 @@
             </table>
 
             <!-- Paginación -->
-            <div v-if="specialPrices.last_page > 1"
-                class="px-6 py-4 border-t border-slate-50 flex items-center justify-between text-sm text-slate-500">
-                <span>Mostrando {{ specialPrices.from }}–{{ specialPrices.to }} de {{ specialPrices.total }}</span>
-                <div class="flex gap-1">
-                    <template v-for="(link, index) in specialPrices.links" :key="index">
-                        <span v-if="link.url === null"
-                            class="px-3 py-1.5 rounded-lg text-slate-400 cursor-not-allowed select-none text-xs"
-                            v-html="link.label">
-                        </span>
-                        <Link v-else
-                            :href="link.url"
-                            class="px-3 py-1.5 rounded-lg transition text-xs"
-                            :class="link.active ? 'bg-cyan-500 text-white font-medium' : 'hover:bg-slate-100 text-slate-600'"
-                            v-html="link.label">
-                        </Link>
-                    </template>
-                </div>
-            </div>
+            <Pagination :data="specialPrices" />
         </div>
 
         <!-- Modal de Importación -->
@@ -155,6 +138,7 @@
 import { ref } from 'vue';
 import { Link, router, useForm } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
+import Pagination from '@/Components/Pagination.vue';
 
 const props = defineProps({ specialPrices: Object, filters: Object });
 const search = ref(props.filters?.search ?? '');

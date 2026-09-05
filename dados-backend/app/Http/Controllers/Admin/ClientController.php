@@ -33,7 +33,9 @@ class ClientController extends Controller
 
     public function create()
     {
-        return Inertia::render('Admin/Clients/Form');
+        return Inertia::render('Admin/Clients/Form', [
+            'equipments' => \App\Models\Equipment::orderBy('model')->get(),
+        ]);
     }
 
     public function store(Request $request)
@@ -47,16 +49,27 @@ class ClientController extends Controller
             'email' => 'nullable|email',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
+            'credit_limit' => 'nullable|numeric|min:0',
+            'credit_days' => 'nullable|integer|min:0',
+            'is_active' => 'nullable|boolean',
+            'vendedor_id' => 'nullable|string|max:100',
+            'vendedor_nombre' => 'nullable|string|max:255',
         ]);
 
-        Client::create($request->all());
+        $client = Client::create($request->all());
+
+        if ($request->has('equipment_ids')) {
+            $client->equipments()->sync($request->equipment_ids);
+        }
+
         return redirect()->route('admin.clients.index')->with('success', 'Cliente creado exitosamente.');
     }
 
     public function edit(Client $client)
     {
         return Inertia::render('Admin/Clients/Form', [
-            'client' => $client->load('branches'),
+            'client' => $client->load(['branches', 'equipments']),
+            'equipments' => \App\Models\Equipment::orderBy('model')->get(),
         ]);
     }
 
@@ -70,9 +83,19 @@ class ClientController extends Controller
             'vat_number' => 'nullable|string|max:50',
             'email' => 'nullable|email',
             'phone' => 'nullable|string|max:20',
+            'credit_limit' => 'nullable|numeric|min:0',
+            'credit_days' => 'nullable|integer|min:0',
+            'is_active' => 'nullable|boolean',
+            'vendedor_id' => 'nullable|string|max:100',
+            'vendedor_nombre' => 'nullable|string|max:255',
         ]);
 
         $client->update($request->all());
+
+        if ($request->has('equipment_ids')) {
+            $client->equipments()->sync($request->equipment_ids);
+        }
+
         return redirect()->route('admin.clients.index')->with('success', 'Cliente actualizado.');
     }
 
@@ -89,10 +112,36 @@ class ClientController extends Controller
         return redirect()->route('admin.clients.index')->with('success', 'Clientes importados exitosamente.');
     }
 
-    public function sync()
+    public function sync(Request $request)
     {
+        @set_time_limit(300);
+        @ini_set('max_execution_time', '300');
+
+        $onlyInactive = $request->boolean('inactive') || $request->boolean('only_inactive');
+        $onlyCredit = $request->boolean('credit') || $request->boolean('only_credit');
+        $onlyVendor = $request->boolean('vendedor') || $request->boolean('vendor') || $request->boolean('only_vendor');
+
+        if ($onlyInactive) {
+            Artisan::call('sync:contifico-clients', ['--inactive' => true]);
+            $output = trim(Artisan::output());
+            return redirect()->route('admin.clients.index')->with('success', 'Sincronización de inactivos completada. ' . $output);
+        }
+
+        if ($onlyCredit) {
+            Artisan::call('sync:contifico-clients', ['--credit' => true]);
+            $output = trim(Artisan::output());
+            return redirect()->route('admin.clients.index')->with('success', 'Sincronización de crédito completada. ' . $output);
+        }
+
+        if ($onlyVendor) {
+            Artisan::call('sync:contifico-clients', ['--vendedor' => true]);
+            $output = trim(Artisan::output());
+            return redirect()->route('admin.clients.index')->with('success', 'Sincronización de vendedores asignados completada. ' . $output);
+        }
+
         Artisan::call('sync:contifico-clients');
-        return redirect()->route('admin.clients.index')->with('success', 'Sincronización con Contifico completada.');
+        $output = trim(Artisan::output());
+        return redirect()->route('admin.clients.index')->with('success', 'Sincronización con Contifico completada. ' . $output);
     }
 
     public function searchJson(Request $request)

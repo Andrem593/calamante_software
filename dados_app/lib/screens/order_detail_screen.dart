@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import 'dart:convert';
 
@@ -15,6 +16,7 @@ class OrderDetailScreen extends StatefulWidget {
 class _OrderDetailScreenState extends State<OrderDetailScreen> {
   dynamic _order;
   bool _loading = true;
+  bool _loadingRide = false;
 
   @override
   void initState() {
@@ -32,6 +34,118 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       print(e);
     } finally {
       setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _showPhoneDialog(String initialPhone, Function(String) onConfirm) async {
+    final controller = TextEditingController(text: initialPhone);
+    return showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Enviar por WhatsApp'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Ingresa el número de teléfono del cliente (con código de país, ej: 593...):',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.phone,
+              decoration: InputDecoration(
+                hintText: 'Número de WhatsApp',
+                prefixIcon: const Icon(Icons.phone, color: Colors.green),
+                fillColor: const Color(0xFFF1FBFE),
+                filled: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              onConfirm(controller.text.trim());
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: const Text('Compartir'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleRideAction({required bool shareOnWhatsapp}) async {
+    final contificoId = _order['contifico_id'];
+    if (contificoId == null) return;
+
+    setState(() => _loadingRide = true);
+    try {
+      final doc = await context.read<ApiService>().get('/contifico/documento/$contificoId');
+      final urlRide = doc['url_ride'];
+      if (urlRide == null || urlRide.toString().isEmpty) {
+        throw Exception('El documento no tiene una URL de RIDE generada.');
+      }
+
+      final uri = Uri.parse(urlRide.toString());
+      if (shareOnWhatsapp) {
+        String initialPhone = '';
+        if (_order['client'] != null && _order['client']['phone'] != null) {
+          initialPhone = _order['client']['phone'].toString().replaceAll(RegExp(r'\D'), '');
+          if (initialPhone.isNotEmpty && !initialPhone.startsWith('593')) {
+            if (initialPhone.startsWith('0')) {
+              initialPhone = '593${initialPhone.substring(1)}';
+            } else {
+              initialPhone = '593$initialPhone';
+            }
+          }
+        }
+
+        await _showPhoneDialog(initialPhone, (phone) async {
+          String finalPhone = phone.replaceAll(RegExp(r'\D'), '');
+          final text = Uri.encodeComponent('Hola, te comparto el RIDE de tu factura: $urlRide');
+          final whatsappUrl = Uri.parse(
+            finalPhone.isNotEmpty
+                ? 'https://wa.me/$finalPhone?text=$text'
+                : 'https://wa.me/?text=$text'
+          );
+
+          if (!await launchUrl(whatsappUrl, mode: LaunchMode.externalApplication)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('No se pudo abrir WhatsApp'), backgroundColor: Colors.red),
+            );
+          }
+        });
+      } else {
+        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+          throw Exception('No se pudo abrir el RIDE');
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _loadingRide = false);
     }
   }
 
@@ -76,10 +190,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             markerId: const MarkerId('order_loc'),
                             position: LatLng(
                                 double.tryParse(
-                                        _order['latitude']?.toString() ?? '0') ??
+                                        _order['latitude']?.toString() ??
+                                            '0') ??
                                     0.0,
                                 double.tryParse(
-                                        _order['longitude']?.toString() ?? '0') ??
+                                        _order['longitude']?.toString() ??
+                                            '0') ??
                                     0.0),
                           ),
                         },
@@ -123,18 +239,17 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                               style: TextStyle(
                                   fontSize: 20, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 10),
-                          ...((_order['items'] as List?) ?? [])
-                              .map((item) => ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(
-                                        item['product']?['name'] ?? 'Producto',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    subtitle: Text('Pedido #${_order['id']}'),
-                                    trailing: Text('${item['quantity']} unidades',
-                                        style:
-                                            const TextStyle(color: Colors.grey)),
-                                  )),
+                          ...((_order['items'] as List?) ?? []).map((item) =>
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                    item['product']?['name'] ?? 'Producto',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold)),
+                                subtitle: Text('Pedido #${_order['id']}'),
+                                trailing: Text('${item['quantity']} unidades',
+                                    style: const TextStyle(color: Colors.grey)),
+                              )),
                           const Divider(height: 40),
                           Row(
                             children: [
@@ -157,8 +272,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                             fontWeight: FontWeight.bold)),
                                     Text(
                                         'Dirección: ${_order['address'] ?? 'Calle Principal 123'}',
-                                        style:
-                                            const TextStyle(color: Colors.grey)),
+                                        style: const TextStyle(
+                                            color: Colors.grey)),
                                     Text(
                                         'Pago: ${(_order['payment_method'] ?? 'Efectivo').toUpperCase()}',
                                         style: const TextStyle(
@@ -171,7 +286,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             ],
                           ),
                           const Divider(height: 40),
-                          SwitchListTile(
+                           SwitchListTile(
                             title: const Text('Pedido Facturado',
                                 style: TextStyle(fontWeight: FontWeight.bold)),
                             subtitle: const Text(
@@ -181,6 +296,81 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             activeColor: const Color(0xFF03A9F4),
                             onChanged: (val) => _toggleInvoiced(val),
                           ),
+                          if (_order['contifico_id'] != null) ...[
+                            const SizedBox(height: 15),
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE3F2FD),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFF90CAF9)),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.description, color: Color(0xFF1976D2)),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'Factura Contifico: ${_order['is_invoiced'] == true || _order['is_invoiced'] == 1 ? "Autorizada/Generada" : "Prefactura"}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF1565C0),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: ElevatedButton.icon(
+                                          onPressed: _loadingRide 
+                                              ? null 
+                                              : () => _handleRideAction(shareOnWhatsapp: false),
+                                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                                          label: const Text('Ver RIDE'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFF1976D2),
+                                            foregroundColor: Colors.white,
+                                            elevation: 0,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: ElevatedButton.icon(
+                                          onPressed: _loadingRide 
+                                              ? null 
+                                              : () => _handleRideAction(shareOnWhatsapp: true),
+                                          icon: const Icon(Icons.share, size: 18),
+                                          label: const Text('WhatsApp'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(0xFF2E7D32),
+                                            foregroundColor: Colors.white,
+                                            elevation: 0,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  if (_loadingRide) ...[
+                                    const SizedBox(height: 10),
+                                    const LinearProgressIndicator(),
+                                  ]
+                                ],
+                              ),
+                            ),
+                          ],
                           if (_order['requested_by_name'] != null) ...[
                             const Divider(height: 40),
                             const Text('Solicitado por',
@@ -210,7 +400,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                               const SizedBox(height: 15),
                               const Text('Firma de Aceptación:',
                                   style: TextStyle(
-                                      fontSize: 14, fontWeight: FontWeight.bold)),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold)),
                               const SizedBox(height: 10),
                               Container(
                                 height: 100,
@@ -221,8 +412,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                                   border: Border.all(color: Colors.grey[200]!),
                                 ),
                                 child: Image.memory(
-                                  base64Decode(_order['signature'].toString().contains(',')
-                                      ? _order['signature'].toString().split(',').last
+                                  base64Decode(_order['signature']
+                                          .toString()
+                                          .contains(',')
+                                      ? _order['signature']
+                                          .toString()
+                                          .split(',')
+                                          .last
                                       : _order['signature']),
                                   fit: BoxFit.contain,
                                 ),

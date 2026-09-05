@@ -12,6 +12,9 @@ class ApiService {
     if (_envApiUrl.isNotEmpty) {
       return _envApiUrl;
     }
+    // Entorno Local:
+    // return 'http://10.0.2.2:8000/api'; // O 'http://192.168.100.217:8000/api'
+    // Producción:
     return 'https://app.grupo-dados.com/api';
   }
 
@@ -55,6 +58,32 @@ class ApiService {
       debugPrint('ApiService error POST: $e');
       rethrow;
     }
+  }
+
+  Future<List<dynamic>> getEquipments() async {
+    final response = await get('/equipments');
+    return response as List<dynamic>;
+  }
+
+  Future<List<dynamic>> getClientEquipments(int clientId,
+      {int? branchId}) async {
+    final String url = branchId != null
+        ? '/clients/$clientId/equipments?branch_id=$branchId'
+        : '/clients/$clientId/equipments?branch_id=null';
+    final response = await get(url);
+    return response as List<dynamic>;
+  }
+
+  Future<void> syncClientEquipments(int clientId, List<int> equipmentIds,
+      {int? branchId}) async {
+    await post('/clients/$clientId/equipments', {
+      'equipment_ids': equipmentIds,
+      'branch_id': branchId,
+    });
+  }
+
+  Future<dynamic> getClientCreditStatus(int clientId) async {
+    return await get('/clients/$clientId/credit-status');
   }
 
   void _handleErrors(http.Response response) {

@@ -19,7 +19,7 @@
             </Link>
         </div>
 
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden overflow-x-auto">
             <table class="w-full">
                 <thead class="bg-slate-50 border-b border-slate-100">
                     <tr>
@@ -75,6 +75,9 @@
                     </tr>
                 </tbody>
             </table>
+
+            <!-- Pagination -->
+            <Pagination :data="users" />
         </div>
     </AdminLayout>
 </template>
@@ -83,6 +86,7 @@
 import { ref } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
 import AdminLayout from '@/Layouts/AdminLayout.vue';
+import Pagination from '@/Components/Pagination.vue';
 
 const props = defineProps({ users: Object, filters: Object });
 const search = ref(props.filters?.search ?? '');
