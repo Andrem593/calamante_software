@@ -53,6 +53,7 @@
                         <button type="button" @click="setPreset('yesterday')" class="px-2.5 py-1 bg-slate-100 hover:bg-cyan-50 hover:text-cyan-600 rounded-lg text-slate-600 transition">Ayer</button>
                         <button type="button" @click="setPreset('thisWeek')" class="px-2.5 py-1 bg-slate-100 hover:bg-cyan-50 hover:text-cyan-600 rounded-lg text-slate-600 transition">Esta Semana</button>
                         <button type="button" @click="setPreset('thisMonth')" class="px-2.5 py-1 bg-slate-100 hover:bg-cyan-50 hover:text-cyan-600 rounded-lg text-slate-600 transition">Este Mes</button>
+                        <button type="button" @click="setPreset('lastMonth')" class="px-2.5 py-1 bg-slate-100 hover:bg-cyan-50 hover:text-cyan-600 rounded-lg text-slate-600 transition">Mes Anterior</button>
                     </div>
                 </div>
 
@@ -78,13 +79,25 @@
                         </div>
                     </template>
 
-                    <!-- Filter & Reset Buttons -->
+                    <!-- Filter, Refresh & Reset Buttons -->
                     <div class="flex items-center gap-2">
-                        <button type="submit"
-                                class="px-5 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-sm font-semibold transition shadow-sm">
-                            Filtrar
+                        <button type="submit" :disabled="isLoading"
+                                class="px-5 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-60 text-white rounded-xl text-sm font-semibold transition shadow-sm flex items-center gap-2">
+                            <svg v-if="isLoading" class="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span>{{ isLoading ? 'Cargando...' : 'Filtrar' }}</span>
                         </button>
-                        <button type="button" @click="resetFilter"
+                        <button type="button" @click="applyFilter(true)" :disabled="isLoading"
+                                title="Forzar sincronización fresca de facturas desde Contifico"
+                                class="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60 text-emerald-700 border border-emerald-200 rounded-xl text-sm font-semibold transition flex items-center gap-1.5 shadow-sm">
+                            <svg class="w-4 h-4" :class="{ 'animate-spin': isLoading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            <span>Actualizar Contifico</span>
+                        </button>
+                        <button type="button" @click="resetFilter" :disabled="isLoading"
                                 class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-sm font-medium transition">
                             Limpiar
                         </button>
@@ -133,8 +146,18 @@
                     </thead>
                     <tbody>
                         <!-- Seller Rows -->
-                        <tr v-for="row in reportData" :key="row.user_id" class="hover:bg-slate-50 border-b border-slate-200 text-right">
-                            <td class="border border-slate-300 px-3 py-2 text-left font-medium text-slate-900">{{ row.seller_name }}</td>
+                        <tr v-for="row in reportData" :key="row.user_id" 
+                            class="hover:bg-slate-50 border-b border-slate-200 text-right transition"
+                            :class="row.user_id === 'contifico' ? 'bg-sky-50/60 font-semibold' : ''">
+                            <td class="border border-slate-300 px-3 py-2 text-left font-medium text-slate-900">
+                                <span v-if="row.user_id === 'contifico'" class="inline-flex items-center gap-1.5 text-sky-900 font-bold">
+                                    <svg class="w-3.5 h-3.5 text-sky-600 inline shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                                    </svg>
+                                    {{ row.seller_name }}
+                                </span>
+                                <span v-else>{{ row.seller_name }}</span>
+                            </td>
                             <td class="border border-slate-300 px-2 py-2">{{ row.visits || '' }}</td>
                             <td class="border border-slate-300 px-2 py-2 bg-yellow-100/70 font-semibold text-slate-900">{{ row.orders_count || '' }}</td>
                             <td class="border border-slate-300 px-3 py-2">{{ formatCurrency(row.invoiced_amount) }}</td>
@@ -200,6 +223,7 @@ const props = defineProps({
 });
 
 const todayStr = new Date().toISOString().split('T')[0];
+const isLoading = ref(false);
 
 const form = ref({
     mode: props.filters?.mode || 'date',
@@ -214,7 +238,12 @@ function setFilterMode(mode) {
 
 function setPreset(preset) {
     const today = new Date();
-    const formatDate = (d) => d.toISOString().split('T')[0];
+    const formatDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
 
     if (preset === 'today') {
         form.value.mode = 'date';
@@ -240,11 +269,18 @@ function setPreset(preset) {
         const first = new Date(today.getFullYear(), today.getMonth(), 1);
         form.value.date_from = formatDate(first);
         form.value.date_to = formatDate(today);
+    } else if (preset === 'lastMonth') {
+        form.value.mode = 'range';
+        const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const last = new Date(today.getFullYear(), today.getMonth(), 0);
+        form.value.date_from = formatDate(first);
+        form.value.date_to = formatDate(last);
     }
     applyFilter();
 }
 
-function applyFilter() {
+function applyFilter(forceRefresh = false) {
+    isLoading.value = true;
     const params = { mode: form.value.mode };
     if (form.value.mode === 'range') {
         params.date_from = form.value.date_from;
@@ -252,9 +288,15 @@ function applyFilter() {
     } else {
         params.date = form.value.date;
     }
+    if (forceRefresh) {
+        params.refresh = 1;
+    }
     router.get(route('admin.reports.presale-direct-sale'), params, {
         preserveState: true,
-        replace: true
+        replace: true,
+        onFinish: () => {
+            isLoading.value = false;
+        }
     });
 }
 

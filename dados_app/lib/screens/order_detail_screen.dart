@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:geolocator/geolocator.dart';
 import '../services/api_service.dart';
+import '../services/offline_database_service.dart';
+import '../services/sync_service.dart';
 import 'dart:convert';
 
 class OrderDetailScreen extends StatefulWidget {
@@ -17,6 +20,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   dynamic _order;
   bool _loading = true;
   bool _loadingRide = false;
+  bool _isQuickCensusing = false;
+  bool _hasQuickCensused = false;
 
   @override
   void initState() {
@@ -92,18 +97,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Future<void> _handleRideAction({required bool shareOnWhatsapp}) async {
-    final contificoId = _order['contifico_id'];
-    if (contificoId == null) return;
-
     setState(() => _loadingRide = true);
     try {
-      final doc = await context.read<ApiService>().get('/contifico/documento/$contificoId');
-      final urlRide = doc['url_ride'];
-      if (urlRide == null || urlRide.toString().isEmpty) {
-        throw Exception('El documento no tiene una URL de RIDE generada.');
+      final api = context.read<ApiService>();
+      final token = api.token;
+      final baseUrl = ApiService.baseUrl;
+      final orderId = _order['id'];
+      final contificoId = _order['contifico_id'];
+
+      String documentUrl = '';
+      bool isOfficialRide = false;
+
+      if (contificoId != null) {
+        try {
+          final doc = await api.get('/contifico/documento/$contificoId');
+          final urlRide = doc['url_ride'];
+          if (urlRide != null && urlRide.toString().isNotEmpty) {
+            documentUrl = urlRide.toString();
+            isOfficialRide = true;
+          }
+        } catch (_) {}
       }
 
-      final uri = Uri.parse(urlRide.toString());
+      // Si no hay RIDE oficial de Contifico (no autorizado aún, prefactura o no sincronizado), usar Vista Previa PDF del backend
+      if (documentUrl.isEmpty) {
+        documentUrl = '$baseUrl/orders/$orderId/pdf?token=$token';
+      }
+
+      final uri = Uri.parse(documentUrl);
+
       if (shareOnWhatsapp) {
         String initialPhone = '';
         if (_order['client'] != null && _order['client']['phone'] != null) {
@@ -119,7 +141,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
         await _showPhoneDialog(initialPhone, (phone) async {
           String finalPhone = phone.replaceAll(RegExp(r'\D'), '');
-          final text = Uri.encodeComponent('Hola, te comparto el RIDE de tu factura: $urlRide');
+          final docTypeLabel = isOfficialRide ? 'RIDE de la factura' : 'Vista Previa del Pedido';
+          final text = Uri.encodeComponent('Hola, te comparto el $docTypeLabel #$orderId: $documentUrl');
           final whatsappUrl = Uri.parse(
             finalPhone.isNotEmpty
                 ? 'https://wa.me/$finalPhone?text=$text'
@@ -134,7 +157,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         });
       } else {
         if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-          throw Exception('No se pudo abrir el RIDE');
+          throw Exception('No se pudo abrir el documento PDF');
         }
       }
     } catch (e) {
@@ -148,6 +171,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       setState(() => _loadingRide = false);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -207,6 +231,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _buildQuickCensusBanner(),
+                          const SizedBox(height: 16),
                           const Text('Estado del pedido',
                               style: TextStyle(
                                   fontSize: 20, fontWeight: FontWeight.bold)),
@@ -296,81 +322,82 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                             activeColor: const Color(0xFF03A9F4),
                             onChanged: (val) => _toggleInvoiced(val),
                           ),
-                          if (_order['contifico_id'] != null) ...[
-                            const SizedBox(height: 15),
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE3F2FD),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: const Color(0xFF90CAF9)),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      const Icon(Icons.description, color: Color(0xFF1976D2)),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          'Factura Contifico: ${_order['is_invoiced'] == true || _order['is_invoiced'] == 1 ? "Autorizada/Generada" : "Prefactura"}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF1565C0),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: ElevatedButton.icon(
-                                          onPressed: _loadingRide 
-                                              ? null 
-                                              : () => _handleRideAction(shareOnWhatsapp: false),
-                                          icon: const Icon(Icons.picture_as_pdf, size: 18),
-                                          label: const Text('Ver RIDE'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(0xFF1976D2),
-                                            foregroundColor: Colors.white,
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: ElevatedButton.icon(
-                                          onPressed: _loadingRide 
-                                              ? null 
-                                              : () => _handleRideAction(shareOnWhatsapp: true),
-                                          icon: const Icon(Icons.share, size: 18),
-                                          label: const Text('WhatsApp'),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: const Color(0xFF2E7D32),
-                                            foregroundColor: Colors.white,
-                                            elevation: 0,
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  if (_loadingRide) ...[
-                                    const SizedBox(height: 10),
-                                    const LinearProgressIndicator(),
-                                  ]
-                                ],
-                              ),
+                          const SizedBox(height: 15),
+                          Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE3F2FD),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFF90CAF9)),
                             ),
-                          ],
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.description, color: Color(0xFF1976D2)),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _order['contifico_id'] != null
+                                            ? 'Factura Contifico: ${_order['is_invoiced'] == true || _order['is_invoiced'] == 1 ? "Autorizada/Generada" : "Prefactura"}'
+                                            : 'Comprobante de Pedido #${_order['id']}',
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1565C0),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        onPressed: _loadingRide 
+                                            ? null 
+                                            : () => _handleRideAction(shareOnWhatsapp: false),
+                                        icon: const Icon(Icons.picture_as_pdf, size: 18),
+                                        label: Text(_order['contifico_id'] != null ? 'Ver RIDE / PDF' : 'Ver PDF'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF1976D2),
+                                          foregroundColor: Colors.white,
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: ElevatedButton.icon(
+                                        onPressed: _loadingRide 
+                                            ? null 
+                                            : () => _handleRideAction(shareOnWhatsapp: true),
+                                        icon: const Icon(Icons.share, size: 18),
+                                        label: const Text('WhatsApp'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(0xFF2E7D32),
+                                          foregroundColor: Colors.white,
+                                          elevation: 0,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (_loadingRide) ...[
+                                  const SizedBox(height: 10),
+                                  const LinearProgressIndicator(),
+                                ]
+                              ],
+                            ),
+                          ),
+
                           if (_order['requested_by_name'] != null) ...[
                             const Divider(height: 40),
                             const Text('Solicitado por',
@@ -639,6 +666,170 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ],
         );
       }).toList(),
+    );
+  }
+
+  Future<void> _quickCensusCurrentLocation() async {
+    final clientId = _order['client_id'] ?? _order['client']?['id'];
+    if (clientId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo identificar el cliente del pedido.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _isQuickCensusing = true);
+
+    try {
+      Position? currentPos;
+      try {
+        currentPos = await Geolocator.getCurrentPosition(
+          timeLimit: const Duration(seconds: 10),
+          desiredAccuracy: LocationAccuracy.high,
+        );
+      } catch (e) {
+        debugPrint('Error obteniendo GPS actual: $e');
+      }
+
+      final double? lat = currentPos?.latitude ?? double.tryParse(_order['latitude']?.toString() ?? '');
+      final double? lng = currentPos?.longitude ?? double.tryParse(_order['longitude']?.toString() ?? '');
+
+      if (lat == null || lng == null || (lat == 0 && lng == 0)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No se pudo obtener una ubicación GPS válida. Activa el GPS del teléfono.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final branchId = _order['branch_id'] ?? _order['branch']?['id'];
+      final clientName = _order['client']?['name'] ?? 'Cliente';
+      final branchName = _order['branch']?['name'];
+
+      final syncService = context.read<SyncService>();
+      final apiService = context.read<ApiService>();
+
+      final payload = {
+        'client_id': clientId,
+        if (branchId != null) 'branch_id': branchId,
+        'latitude': lat,
+        'longitude': lng,
+      };
+
+      if (syncService.isOnline) {
+        await apiService.saveBranchCensus(payload, clientId: clientId);
+      } else {
+        await OfflineDatabaseService.instance.insertOfflineCensus(
+          payload,
+          clientId: clientId,
+          clientName: clientName,
+          branchId: branchId,
+        );
+        syncService.checkPendingCounts();
+      }
+
+      setState(() {
+        _hasQuickCensused = true;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    branchName != null
+                        ? '¡Ubicación de "$branchName" actualizada con tu GPS!'
+                        : '¡Ubicación de "$clientName" actualizada con tu GPS!',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green[700],
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error en Quick Census: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al actualizar ubicación: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isQuickCensusing = false);
+    }
+  }
+
+  Widget _buildQuickCensusBanner() {
+    final bool isGeocoded = _hasQuickCensused ||
+        (_order['branch']?['latitude'] != null) ||
+        (_order['latitude'] != null && _order['latitude'] != 0);
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isGeocoded ? const Color(0xFFE8F5E9) : const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isGeocoded ? const Color(0xFFA5D6A7) : const Color(0xFFFFE082),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isGeocoded ? Icons.check_circle_rounded : Icons.add_location_alt_rounded,
+            color: isGeocoded ? Colors.green[700] : Colors.orange[800],
+            size: 24,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isGeocoded ? 'Ubicación Registrada' : '¿Entregando en el local?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: isGeocoded ? Colors.green[900] : Colors.orange[900],
+                  ),
+                ),
+                Text(
+                  isGeocoded
+                      ? 'Puedes re-fijar las coordenadas oficiales con 1 clic si estás en la puerta.'
+                      : 'Fija esta ubicación GPS actual como la oficial del cliente con 1 clic.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _isQuickCensusing ? null : _quickCensusCurrentLocation,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isGeocoded ? Colors.green[600] : const Color(0xFF03A9F4),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: _isQuickCensusing
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text(
+                    isGeocoded ? 'Actualizar GPS' : 'Fijar GPS',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

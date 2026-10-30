@@ -79,8 +79,8 @@
 
         <!-- Filter Bar -->
         <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 mb-6">
-            <form @submit.prevent="applyFilters" class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-                <div class="space-y-1">
+            <form @submit.prevent="generateReport" class="grid grid-cols-1 sm:grid-cols-4 gap-4 items-end">
+                <div class="space-y-1 sm:col-span-2">
                     <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Buscar por Cliente, Sucursal, Ruta o Sector</label>
                     <div class="relative">
                         <input v-model="searchForm.search" type="text" placeholder="Ej: Supermercado, Ruta 1, Samborondón..."
@@ -105,19 +105,47 @@
 
                 <div class="flex items-center gap-2">
                     <button type="submit"
-                        class="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-medium text-sm rounded-xl transition-all shadow-md shadow-cyan-600/15">
-                        Filtrar
+                        class="flex-1 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm rounded-xl transition-all shadow-md shadow-cyan-600/15 flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        Generar Reporte
                     </button>
                     <button type="button" @click="resetFilters"
-                        class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium text-sm rounded-xl transition-all">
+                        class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium text-sm rounded-xl transition-all">
                         Limpiar
                     </button>
                 </div>
             </form>
         </div>
 
-        <!-- Table -->
-        <div class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <!-- Initial Un-generated State -->
+        <div v-if="!is_generated" class="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm mb-6">
+            <div class="w-16 h-16 rounded-3xl bg-cyan-50 border border-cyan-100 flex items-center justify-center text-cyan-600 mx-auto mb-4">
+                <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+            </div>
+            <h3 class="text-lg font-bold text-slate-800 mb-1">Reporte de Geolocalizaciones</h3>
+            <p class="text-sm text-slate-500 max-w-md mx-auto mb-6">
+                Ingresa un criterio de búsqueda o haz clic en el botón <strong>"Generar Reporte"</strong> para procesar y cargar las ubicaciones más frecuentes de las sucursales.
+            </p>
+            <button @click="generateReport"
+                class="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-sm rounded-xl shadow-lg shadow-cyan-600/20 transition-all inline-flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Generar Reporte Ahora
+            </button>
+        </div>
+
+        <!-- Table (When generated) -->
+        <div v-else class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse text-sm">
                     <thead>
@@ -254,17 +282,27 @@ import { router, Link } from '@inertiajs/vue3';
 const props = defineProps({
     branches: Object,
     summary: Object,
-    filters: Object
+    filters: Object,
+    is_generated: {
+        type: Boolean,
+        default: false,
+    }
 });
 
 const searchForm = ref({
     has_geo: props.filters.has_geo || '',
     search: props.filters.search || '',
+    generate: props.filters.generate || '',
 });
 
 const exportUrl = computed(() => {
-    return route('admin.reports.branches-geolocation.export', searchForm.value);
+    return route('admin.reports.branches-geolocation.export', { ...searchForm.value, generate: '1' });
 });
+
+function generateReport() {
+    searchForm.value.generate = '1';
+    applyFilters();
+}
 
 function applyFilters() {
     router.get(route('admin.reports.branches-geolocation'), searchForm.value, {
@@ -277,6 +315,7 @@ function resetFilters() {
     searchForm.value = {
         has_geo: '',
         search: '',
+        generate: '',
     };
     applyFilters();
 }

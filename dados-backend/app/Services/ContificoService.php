@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Setting;
 use App\Models\Client;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -471,40 +473,184 @@ class ContificoService
      */
     public function getPendingDocuments(string $identification)
     {
-        try {
-            $url = $this->baseUrl . 'registro/documento/?persona_identificacion=' . urlencode($identification) . '&tipo=FAC&tipo_registro=CLI&estado=P';
-            $response = $this->getClient()->get($url);
-
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::error("Error fetching pending documents for $identification from Contifico: " . $response->body());
-            return [];
-        } catch (\Exception $e) {
-            Log::error("Exception fetching pending documents for $identification from Contifico: " . $e->getMessage());
+        $cleanIdent = trim($identification);
+        if (empty($cleanIdent)) {
             return [];
         }
+
+        $syncHours = (int) \App\Models\Setting::get('CONTIFICO_SYNC_INTERVAL', 12);
+        if ($syncHours <= 0) {
+            $syncHours = 12;
+        }
+        $cacheSeconds = $syncHours * 3600;
+
+        $cacheKey = 'contifico_pending_docs_' . md5($cleanIdent);
+
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, $cacheSeconds, function () use ($cleanIdent) {
+            try {
+                $url = $this->baseUrl . 'registro/documento/?persona_identificacion=' . urlencode($cleanIdent) . '&tipo=FAC&tipo_registro=CLI&estado=P';
+                $response = \Illuminate\Support\Facades\Http::timeout(6)
+                    ->withHeaders(['Authorization' => $this->apiKey])
+                    ->get($url);
+
+                if ($response->successful()) {
+                    return $response->json();
+                }
+
+                Log::error("Error fetching pending documents for $cleanIdent from Contifico: " . $response->body());
+                return [];
+            } catch (\Exception $e) {
+                Log::error("Exception fetching pending documents for $cleanIdent from Contifico: " . $e->getMessage());
+                return [];
+            }
+        });
     }
 
     /**
      * Obtiene las facturas de venta emitidas en Contifico dentro de un rango de fechas.
+     * Optimizado con:
+     * - Consulta por fecha exacta (fecha_emision) en lotes concurrentes (Http::pool) para evitar timeouts en Contifico.
+     * - Paginación segura (result_size=500).
+     * - Caché inteligente: días pasados (7 días en caché) y día actual (3 minutos).
+     * - Opción de forzar refresco ($forceRefresh = true).
      */
-    public function fetchInvoices(?string $from = null, ?string $to = null)
+    public function fetchInvoices(?string $from = null, ?string $to = null, bool $forceRefresh = false): array
     {
-        try {
-            $url = $this->baseUrl . 'registro/documento/?tipo_registro=CLI&tipo=FAC';
-            if ($from) {
-                $url .= '&fecha_inicio=' . urlencode($from);
-            }
-            $response = $this->getClient()->get($url);
-
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::error('Error fetching invoices from Contifico: ' . $response->body());
+        if (!$this->apiKey) {
+            Log::warning('API Key de Contifico no configurada para fetchInvoices.');
             return [];
+        }
+
+        try {
+            $parseDate = function ($dateStr) {
+                if (!$dateStr) return null;
+                $dateStr = trim($dateStr);
+                if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $dateStr, $m)) {
+                    return Carbon::createFromDate((int)$m[3], (int)$m[2], (int)$m[1])->startOfDay();
+                }
+                return Carbon::parse($dateStr)->startOfDay();
+            };
+
+            $startDate = $parseDate($from) ?? Carbon::today();
+            $endDate = $parseDate($to) ?? $startDate->copy();
+
+            if ($startDate->isAfter($endDate)) {
+                $temp = $startDate;
+                $startDate = $endDate;
+                $endDate = $temp;
+            }
+
+            // Limitar a máximo 95 días por consulta para seguridad de memoria y rendimiento
+            if ($startDate->diffInDays($endDate) > 95) {
+                $startDate = $endDate->copy()->subDays(95);
+            }
+
+            $dates = [];
+            $curr = $startDate->copy();
+            while ($curr->lte($endDate)) {
+                $dates[] = $curr->copy();
+                $curr->addDay();
+            }
+
+            $allInvoices = [];
+            $missingDays = [];
+
+            foreach ($dates as $day) {
+                $cacheKey = 'contifico_invoices_day_' . $day->format('Y_m_d');
+                if (!$forceRefresh && Cache::has($cacheKey)) {
+                    $cached = Cache::get($cacheKey, []);
+                    if (is_array($cached)) {
+                        $allInvoices = array_merge($allInvoices, $cached);
+                        continue;
+                    }
+                }
+                $missingDays[] = $day;
+            }
+
+            // Consultar días faltantes en lotes concurrentes (máximo 5 en paralelo para no saturar Contifico)
+            if (!empty($missingDays)) {
+                $chunks = array_chunk($missingDays, 5);
+                $apiKey = $this->apiKey;
+
+                foreach ($chunks as $chunk) {
+                    $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($chunk, $apiKey) {
+                        foreach ($chunk as $day) {
+                            $dateFormatted = $day->format('d/m/Y');
+                            $url = $this->baseUrl . 'registro/documento/?tipo_registro=CLI&tipo=FAC&fecha_emision=' . urlencode($dateFormatted) . '&result_size=500';
+                            $pool->as($day->format('Y-m-d'))
+                                ->withHeaders(['Authorization' => $apiKey])
+                                ->timeout(45)
+                                ->get($url);
+                        }
+                    });
+
+                    foreach ($chunk as $day) {
+                        $dateKey = $day->format('Y-m-d');
+                        $dateFormatted = $day->format('d/m/Y');
+                        $response = $responses[$dateKey] ?? null;
+                        $dayInvoices = [];
+
+                        if ($response instanceof \Illuminate\Http\Client\Response && $response->successful()) {
+                            $data = $response->json();
+                            $dayInvoices = is_array($data) ? array_values($data) : [];
+
+                            // Paginación si el día alcanzó el límite de 500 resultados
+                            $page = 2;
+                            while (count($data) >= 500 && $page <= 5) {
+                                try {
+                                    $pUrl = $this->baseUrl . 'registro/documento/?tipo_registro=CLI&tipo=FAC&fecha_emision=' . urlencode($dateFormatted) . '&result_size=500&result_page=' . $page;
+                                    $pRes = Http::withHeaders(['Authorization' => $apiKey])->timeout(30)->get($pUrl);
+                                    if ($pRes->successful()) {
+                                        $pData = $pRes->json();
+                                        if (is_array($pData) && !empty($pData)) {
+                                            $dayInvoices = array_merge($dayInvoices, array_values($pData));
+                                            $data = $pData;
+                                            $page++;
+                                        } else {
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                } catch (\Exception $e) {
+                                    Log::warning("Error en paginación Contifico día {$dateKey} página {$page}: " . $e->getMessage());
+                                    break;
+                                }
+                            }
+                        } elseif ($response instanceof \Exception) {
+                            Log::warning("Excepción consultando Contifico para el día {$dateKey}: " . $response->getMessage());
+                        } else {
+                            $body = ($response instanceof \Illuminate\Http\Client\Response) ? $response->body() : 'No response';
+                            Log::warning("Error HTTP consultando Contifico para el día {$dateKey}: " . $body);
+                        }
+
+                        // Guardar en caché según la fecha:
+                        // Días pasados: 7 días de vigencia (las facturas cerradas ya no cambian)
+                        // Día actual: 3 minutos de vigencia
+                        $cacheKey = 'contifico_invoices_day_' . $day->format('Y_m_d');
+                        if ($day->isBefore(Carbon::today())) {
+                            Cache::put($cacheKey, $dayInvoices, now()->addDays(7));
+                        } else {
+                            Cache::put($cacheKey, $dayInvoices, now()->addMinutes(3));
+                        }
+
+                        $allInvoices = array_merge($allInvoices, $dayInvoices);
+                    }
+                }
+            }
+
+            // Deduplicar facturas por ID
+            $uniqueInvoices = [];
+            foreach ($allInvoices as $inv) {
+                if (!empty($inv['id'])) {
+                    $uniqueInvoices[$inv['id']] = $inv;
+                } else {
+                    $uniqueInvoices[] = $inv;
+                }
+            }
+
+            return array_values($uniqueInvoices);
+
         } catch (\Exception $e) {
             Log::error('Exception fetching invoices from Contifico: ' . $e->getMessage());
             return [];

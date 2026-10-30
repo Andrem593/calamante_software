@@ -31,7 +31,7 @@ class ApiService {
     try {
       final response = await http
           .get(Uri.parse('$baseUrl$endpoint'), headers: _headers)
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 25));
       debugPrint('ApiService status: ${response.statusCode}');
       _handleErrors(response);
       return jsonDecode(response.body);
@@ -50,7 +50,7 @@ class ApiService {
             headers: _headers,
             body: jsonEncode(body),
           )
-          .timeout(const Duration(seconds: 10));
+          .timeout(const Duration(seconds: 45));
       debugPrint('ApiService status: ${response.statusCode}');
       _handleErrors(response);
       return jsonDecode(response.body);
@@ -84,6 +84,18 @@ class ApiService {
 
   Future<dynamic> getClientCreditStatus(int clientId) async {
     return await get('/clients/$clientId/credit-status');
+  }
+
+  Future<List<dynamic>> getClientBranches(int clientId) async {
+    final response = await get('/clients/$clientId/branches');
+    return response as List<dynamic>;
+  }
+
+  Future<dynamic> saveBranchCensus(Map<String, dynamic> data, {int? clientId}) async {
+    final endpoint = (clientId != null && clientId > 0)
+        ? '/clients/$clientId/branches/census'
+        : '/branches/census';
+    return await post(endpoint, data);
   }
 
   void _handleErrors(http.Response response) {

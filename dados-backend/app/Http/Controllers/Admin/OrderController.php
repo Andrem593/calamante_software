@@ -179,7 +179,12 @@ class OrderController extends Controller
             $contifico = app(\App\Services\ContificoService::class);
             $result = $contifico->createPreinvoice($order);
             if ($result) {
-                return redirect()->back()->with('success', 'Pedido sincronizado con Contifico exitosamente. ID de Prefactura: ' . ($order->contifico_id ?? 'N/A'));
+                OrderTracking::create([
+                    'order_id' => $order->id,
+                    'status' => 'contifico_synced',
+                    'details' => 'Sincronización con Contifico autorizada y completada por ' . (auth()->user()?->name ?? 'Administrador') . '. Documento ID: ' . ($order->contifico_id ?? 'N/A'),
+                ]);
+                return redirect()->back()->with('success', 'Pedido sincronizado y emitido en Contifico exitosamente. ID: ' . ($order->contifico_id ?? 'N/A'));
             }
             return redirect()->back()->with('error', 'No se pudo sincronizar el pedido con Contifico.');
         } catch (\Exception $e) {
@@ -391,5 +396,44 @@ class OrderController extends Controller
         ]);
 
         return redirect()->back()->with('success', 'Pedido marcado como entregado exitosamente.');
+    }
+
+    public function bulkSyncContifico(Request $request)
+    {
+        $request->validate([
+            'order_ids' => 'required|array',
+            'order_ids.*' => 'exists:orders,id',
+        ]);
+
+        $orders = Order::whereIn('id', $request->order_ids)
+            ->where('status', '!=', 'cancelled')
+            ->whereNull('contifico_id')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            return redirect()->back()->with('error', 'No hay pedidos pendientes de sincronización seleccionados.');
+        }
+
+        $contifico = app(\App\Services\ContificoService::class);
+        $successCount = 0;
+        $adminName = auth()->user()?->name ?? 'Administrador';
+
+        foreach ($orders as $order) {
+            try {
+                $result = $contifico->createPreinvoice($order);
+                if ($result) {
+                    OrderTracking::create([
+                        'order_id' => $order->id,
+                        'status' => 'contifico_synced',
+                        'details' => "Sincronización con Contifico autorizada en lote por {$adminName}. Documento ID: " . ($order->contifico_id ?? 'N/A'),
+                    ]);
+                    $successCount++;
+                }
+            } catch (\Exception $e) {
+                \Log::error("Error en bulkSyncContifico para pedido #{$order->id}: " . $e->getMessage());
+            }
+        }
+
+        return redirect()->back()->with('success', "Se autorizaron y sincronizaron {$successCount} pedido(s) con Contifico.");
     }
 }

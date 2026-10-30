@@ -15,6 +15,8 @@ import 'screens/order_detail_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/visits_screen.dart';
 import 'screens/create_visit_screen.dart';
+import 'screens/branch_census_screen.dart';
+import 'models/models.dart';
 
 void main() {
   debugPrint('--- APP STARTING ---');
@@ -40,7 +42,7 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  static const String appVersion = '1.0.6';
+  static const String appVersion = '1.0.12';
   late Future<Map<String, dynamic>?> _initFuture;
   bool _hasShownUpdateDialog = false;
 
@@ -244,6 +246,23 @@ class _MyAppState extends State<MyApp> {
         }
         if (settings.name == '/create_visit') {
           return MaterialPageRoute(builder: (_) => const CreateVisitScreen());
+        }
+        if (settings.name == '/census' || settings.name == '/branch_census') {
+          Client? clientArg;
+          Branch? branchArg;
+          if (settings.arguments is Map<String, dynamic>) {
+            final args = settings.arguments as Map<String, dynamic>;
+            clientArg = args['client'] as Client?;
+            branchArg = args['branch'] as Branch?;
+          } else if (settings.arguments is Client) {
+            clientArg = settings.arguments as Client;
+          }
+          return MaterialPageRoute(
+            builder: (_) => BranchCensusScreen(
+              initialClient: clientArg,
+              initialBranch: branchArg,
+            ),
+          );
         }
         return null;
       },

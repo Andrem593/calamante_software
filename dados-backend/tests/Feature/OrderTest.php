@@ -43,6 +43,45 @@ class OrderTest extends TestCase
         $this->assertDatabaseHas('order_items', ['product_id' => $product->id, 'quantity' => 2]);
     }
 
+    public function test_create_order_preserves_custom_created_at_from_offline_sync()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $client = Client::create(['name' => 'Cliente Offline', 'email' => 'offline@client.com']);
+        $product = Product::create(['name' => 'Prod Offline', 'price' => 15.0, 'stock' => 10]);
+
+        $customDate = '2026-09-28 14:30:00';
+
+        $response = $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 2,
+                    'price' => 15.0,
+                ]
+            ],
+            'created_at' => $customDate,
+        ]);
+
+        $response->assertStatus(201);
+        $order = Order::latest('id')->first();
+        $this->assertNotNull($order);
+        $this->assertEquals('2026-09-28 14:30:00', $order->created_at->format('Y-m-d H:i:s'));
+        $this->assertEquals('2026-09-29', $order->delivery_date->format('Y-m-d'));
+        
+        $item = $order->items()->first();
+        $this->assertEquals('2026-09-28 14:30:00', $item->created_at->format('Y-m-d H:i:s'));
+
+        // No debe enviarse a Contifico automáticamente por ser fecha anterior
+        $this->assertNull($order->contifico_id);
+        $this->assertDatabaseHas('order_trackings', [
+            'order_id' => $order->id,
+            'status' => 'pending_contifico_approval',
+        ]);
+    }
+
     public function test_create_order_with_discount_successfully()
     {
         $user = User::factory()->create();
@@ -149,10 +188,20 @@ class OrderTest extends TestCase
         $this->assertContains('FUNDAS DE HIELO LISTO 2.5 KG', $names);
         $this->assertContains('VASOS 16ONZ', $names);
 
-        // For normal client, all three products should return
+        // For normal client, p1 (HIELO LISTO) must NOT return, only p2 and p3
         $resNormal = $this->getJson("/api/products?client_id={$normalClient->id}");
         $resNormal->assertStatus(200);
-        $this->assertCount(3, $resNormal->json());
+        $this->assertCount(2, $resNormal->json());
+        $namesNormal = array_column($resNormal->json(), 'name');
+        $this->assertNotContains('FUNDAS DE HIELO LISTO 2.5 KG', $namesNormal);
+        $this->assertContains('FUNDAS DE HIELO 3.5 KG', $namesNormal);
+        $this->assertContains('VASOS 16ONZ', $namesNormal);
+
+        // For request without client_id, HIELO LISTO must also be excluded
+        $resNoClient = $this->getJson('/api/products');
+        $resNoClient->assertStatus(200);
+        $namesNoClient = array_column($resNoClient->json(), 'name');
+        $this->assertNotContains('FUNDAS DE HIELO LISTO 2.5 KG', $namesNoClient);
     }
 
     public function test_admin_sync_contifico_successfully()
@@ -177,6 +226,38 @@ class OrderTest extends TestCase
         });
 
         $response = $this->post("/admin/orders/{$order->id}/sync-contifico");
+        $response->assertRedirect();
+        $response->assertSessionHas('success');
+    }
+
+    public function test_admin_bulk_sync_contifico_successfully()
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        $client = Client::create(['name' => 'Cliente Test Admin Bulk', 'email' => 'testbulk@client.com']);
+        $order1 = Order::create([
+            'user_id' => $admin->id,
+            'client_id' => $client->id,
+            'total' => 50.0,
+            'status' => 'pending'
+        ]);
+        $order2 = Order::create([
+            'user_id' => $admin->id,
+            'client_id' => $client->id,
+            'total' => 75.0,
+            'status' => 'pending'
+        ]);
+
+        $this->mock(\App\Services\ContificoService::class, function ($mock) {
+            $mock->shouldReceive('createPreinvoice')
+                ->twice()
+                ->andReturn(['id' => 'contifico-preinvoice-123']);
+        });
+
+        $response = $this->post("/admin/orders/bulk-sync-contifico", [
+            'order_ids' => [$order1->id, $order2->id]
+        ]);
         $response->assertRedirect();
         $response->assertSessionHas('success');
     }
@@ -692,6 +773,65 @@ class OrderTest extends TestCase
         ]);
     }
 
+    public function test_create_order_payment_and_credit_days_depend_on_client()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        // Caso 1: Cliente con 20 días de crédito configurados en BD
+        $creditClient = Client::create([
+            'name' => 'Cliente Crédito 20d',
+            'email' => 'cred20@client.com',
+            'credit_days' => 20,
+            'credit_limit' => 500,
+        ]);
+        $product = Product::create(['name' => 'Prod Test', 'price' => 10.0, 'stock' => 10]);
+
+        // Intento de enviar Efectivo y 0 días para este cliente con crédito
+        $res1 = $this->postJson('/api/orders', [
+            'client_id' => $creditClient->id,
+            'items' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'price' => 10.0]
+            ],
+            'latitude' => 10.0,
+            'longitude' => -10.0,
+            'payment_method' => 'Efectivo',
+            'credit_days' => 0,
+        ]);
+        $res1->assertStatus(201);
+        $this->assertDatabaseHas('orders', [
+            'client_id' => $creditClient->id,
+            'payment_method' => 'Crédito',
+            'credit_days' => 20,
+        ]);
+
+        // Caso 2: Cliente de contado (0 días de crédito y 0 límite)
+        $cashClient = Client::create([
+            'name' => 'Cliente Contado Estricto',
+            'email' => 'cashstrict@client.com',
+            'credit_days' => 0,
+            'credit_limit' => 0,
+        ]);
+
+        // Intento de enviar Crédito y 60 días para este cliente de contado
+        $res2 = $this->postJson('/api/orders', [
+            'client_id' => $cashClient->id,
+            'items' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'price' => 10.0]
+            ],
+            'latitude' => 10.0,
+            'longitude' => -10.0,
+            'payment_method' => 'Crédito',
+            'credit_days' => 60,
+        ]);
+        $res2->assertStatus(201);
+        $this->assertDatabaseHas('orders', [
+            'client_id' => $cashClient->id,
+            'payment_method' => 'Efectivo',
+            'credit_days' => 0,
+        ]);
+    }
+
     public function test_merge_clients_successfully()
     {
         // 1. Create client A (Cedula, has branches, orders, special prices, email)
@@ -1178,7 +1318,328 @@ class OrderTest extends TestCase
         $this->assertEquals('1801694140', $resCedula['cedula']);
         $this->assertNull($resCedula['ruc']);
     }
+
+    public function test_client_blocked_for_sales_cannot_place_order()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $blockedClient = Client::create([
+            'name' => 'Cliente Bloqueado',
+            'identification' => '1234567890001',
+            'email' => 'blocked@client.com',
+            'is_blocked' => true,
+        ]);
+        $product = Product::create(['name' => 'Prod Test Block', 'price' => 10.0, 'stock' => 10]);
+
+        $response = $this->postJson('/api/orders', [
+            'client_id' => $blockedClient->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'price' => 10.0,
+                ]
+            ],
+        ]);
+
+        $response->assertStatus(422);
+        $response->assertJson(['is_blocked' => true]);
+        $this->assertDatabaseMissing('orders', ['client_id' => $blockedClient->id]);
+    }
+
+    public function test_admin_can_unblock_client_temporarily_for_days_allowing_orders()
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        $client = Client::create([
+            'name' => 'Cliente Bloqueado Admin',
+            'identification' => '0999999999001',
+            'email' => 'blockedadmin@client.com',
+            'is_blocked' => true,
+        ]);
+
+        // Unblock for 2 days
+        $unblockResponse = $this->post("/admin/clients/{$client->id}/unblock", [
+            'days' => 2,
+            'reason' => 'Autorización gerencial',
+        ]);
+
+        $unblockResponse->assertRedirect();
+        $unblockResponse->assertSessionHas('success');
+
+        $client->refresh();
+        $this->assertFalse($client->isBlockedForSales());
+        $this->assertNotNull($client->unblocked_until);
+
+        // Now order should succeed
+        Sanctum::actingAs($admin, ['*']);
+        $product = Product::create(['name' => 'Prod Test Unblock', 'price' => 15.0, 'stock' => 10]);
+
+        $orderResponse = $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 1,
+                    'price' => 15.0,
+                ]
+            ],
+        ]);
+
+        $orderResponse->assertStatus(201);
+        $this->assertDatabaseHas('orders', ['client_id' => $client->id, 'total' => 15.0]);
+    }
+
+    public function test_create_order_and_invoice_transmission_with_settings()
+    {
+        // 1. Configurar intervalos de sincronización en settings
+        \App\Models\Setting::set('CONTIFICO_SYNC_INTERVAL', '12');
+        \App\Models\Setting::set('CONTIFICO_API_KEY', 'test-api-key');
+
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $client = Client::create([
+            'name' => 'Cliente Transmisión Test',
+            'identification' => '0912345678001',
+            'identification_type' => 'RUC',
+            'email' => 'transmision@test.com',
+            'is_active' => true,
+        ]);
+
+        $product = Product::create([
+            'name' => 'Producto Transmisión',
+            'price' => 25.0,
+            'stock' => 50,
+            'contifico_id' => 'prod-transmision-123',
+            'tax_percentage' => 15.0,
+        ]);
+
+        // 2. Enviar pedido desde la app móvil al backend (POST /api/orders)
+        $response = $this->postJson('/api/orders', [
+            'client_id' => $client->id,
+            'payment_method' => 'Efectivo',
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 2,
+                    'price' => 25.0,
+                ]
+            ],
+            'notes' => 'Pedido enviado normalmente desde app móvil',
+            'latitude' => -2.18,
+            'longitude' => -79.88,
+        ]);
+
+        $response->assertStatus(201);
+        $orderId = $response->json('id');
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $orderId,
+            'client_id' => $client->id,
+            'user_id' => $user->id,
+            'total' => 50.0,
+            'payment_method' => 'Efectivo',
+            'status' => 'pending',
+        ]);
+
+        $this->assertDatabaseHas('order_items', [
+            'order_id' => $orderId,
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'price' => 25.0,
+            'subtotal' => 50.0,
+        ]);
+
+        // 3. Fake HTTP de la API de Contifico para transmisión real de prefactura/factura
+        \Illuminate\Support\Facades\Http::fake([
+            'https://api.contifico.com/sistema/api/v1/documento/' => \Illuminate\Support\Facades\Http::response([
+                'id' => 'doc-contifico-ok-999',
+                'estado' => 'P',
+                'total' => 50.0,
+            ], 201),
+        ]);
+
+        // 4. Probar la sincronización con Contifico desde el backend admin
+        $admin = User::factory()->create(['role' => 'admin']);
+        $this->actingAs($admin);
+
+        $syncResponse = $this->post("/admin/orders/{$orderId}/sync-contifico");
+        $syncResponse->assertRedirect();
+        $syncResponse->assertSessionHas('success');
+
+        $this->assertDatabaseHas('orders', [
+            'id' => $orderId,
+            'contifico_id' => 'doc-contifico-ok-999',
+            'is_preinvoiced' => true,
+        ]);
+    }
+
+    public function test_prevent_duplicate_orders()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $client = Client::create(['name' => 'Cliente Dup Test', 'email' => 'dup@client.com']);
+        $product = Product::create(['name' => 'Prod Dup', 'price' => 10.0, 'stock' => 100]);
+
+        $payload = [
+            'client_id' => $client->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 5,
+                    'price' => 10.0,
+                ]
+            ],
+            'latitude' => -2.18,
+            'longitude' => -79.88,
+        ];
+
+        // Primer envío -> crea la orden #1
+        $res1 = $this->postJson('/api/orders', $payload);
+        $res1->assertStatus(201);
+        $orderId1 = $res1->json('id');
+
+        // Segundo envío idéntico inmediato -> detecta duplicado y retorna la orden #1
+        $res2 = $this->postJson('/api/orders', $payload);
+        $res2->assertStatus(200);
+        $orderId2 = $res2->json('id');
+
+        $this->assertEquals($orderId1, $orderId2);
+        $this->assertEquals(1, Order::where('client_id', $client->id)->count());
+    }
+
+    public function test_prevent_duplicate_orders_different_branches_creates_separate_orders()
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $client = Client::create(['name' => 'Cliente Multi Sucursal', 'email' => 'multi@client.com']);
+        $branch1 = \App\Models\Branch::create(['client_id' => $client->id, 'name' => 'Sucursal Norte']);
+        $branch2 = \App\Models\Branch::create(['client_id' => $client->id, 'name' => 'Sucursal Sur']);
+        $product = Product::create(['name' => 'Prod Hielo', 'price' => 10.0, 'stock' => 100]);
+
+        $payload1 = [
+            'client_id' => $client->id,
+            'branch_id' => $branch1->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 5,
+                    'price' => 10.0,
+                ]
+            ],
+            'latitude' => -2.18,
+            'longitude' => -79.88,
+        ];
+
+        $payload2 = [
+            'client_id' => $client->id,
+            'branch_id' => $branch2->id,
+            'items' => [
+                [
+                    'product_id' => $product->id,
+                    'quantity' => 5,
+                    'price' => 10.0,
+                ]
+            ],
+            'latitude' => -2.18,
+            'longitude' => -79.88,
+        ];
+
+        // Envío para Sucursal 1 -> crea orden 1
+        $res1 = $this->postJson('/api/orders', $payload1);
+        $res1->assertStatus(201);
+        $orderId1 = $res1->json('id');
+
+        // Envío para Sucursal 2 -> crea orden 2 (no debe considerarse duplicado)
+        $res2 = $this->postJson('/api/orders', $payload2);
+        $res2->assertStatus(201);
+        $orderId2 = $res2->json('id');
+
+        $this->assertNotEquals($orderId1, $orderId2);
+        $this->assertEquals(2, Order::where('client_id', $client->id)->count());
+    }
+
+    public function test_cash_client_grace_period_for_overdue_invoices()
+    {
+        // 1. Cliente de contado con factura vencida hace 2 días (dentro del plazo de 3 días de gracia) -> NO debe estar bloqueado
+        $cashClientWithinGrace = Client::create([
+            'name' => 'Cliente Contado Gracia',
+            'identification' => '0990000001001',
+            'credit_days' => 0,
+        ]);
+
+        $mockContifico1 = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico1->expects($this->once())
+            ->method('getPendingDocuments')
+            ->with('0990000001001')
+            ->willReturn([
+                [
+                    'id' => 'doc1',
+                    'documento' => '001-001-000000001',
+                    'fecha_vencimiento' => \Carbon\Carbon::today()->subDays(2)->format('d/m/Y'),
+                    'total' => 100.0,
+                    'saldo' => 100.0,
+                ]
+            ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico1);
+
+        $this->assertFalse($cashClientWithinGrace->isBlockedForSales());
+
+        // 2. Cliente de contado con factura vencida hace 4 días (fuera del plazo de 3 días de gracia) -> SI debe estar bloqueado
+        $cashClientPastGrace = Client::create([
+            'name' => 'Cliente Contado Bloqueado',
+            'identification' => '0990000002001',
+            'credit_days' => null,
+        ]);
+
+        $mockContifico2 = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico2->expects($this->once())
+            ->method('getPendingDocuments')
+            ->with('0990000002001')
+            ->willReturn([
+                [
+                    'id' => 'doc2',
+                    'documento' => '001-001-000000002',
+                    'fecha_vencimiento' => \Carbon\Carbon::today()->subDays(4)->format('d/m/Y'),
+                    'total' => 150.0,
+                    'saldo' => 150.0,
+                ]
+            ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico2);
+
+        $this->assertTrue($cashClientPastGrace->isBlockedForSales());
+
+        // 3. Cliente de crédito con factura vencida hace 1 día -> SI debe estar bloqueado de inmediato
+        $creditClient = Client::create([
+            'name' => 'Cliente Credito Bloqueado',
+            'identification' => '0990000003001',
+            'credit_days' => 30,
+        ]);
+
+        $mockContifico3 = $this->createMock(\App\Services\ContificoService::class);
+        $mockContifico3->expects($this->once())
+            ->method('getPendingDocuments')
+            ->with('0990000003001')
+            ->willReturn([
+                [
+                    'id' => 'doc3',
+                    'documento' => '001-001-000000003',
+                    'fecha_vencimiento' => \Carbon\Carbon::today()->subDays(1)->format('d/m/Y'),
+                    'total' => 200.0,
+                    'saldo' => 200.0,
+                ]
+            ]);
+        $this->app->instance(\App\Services\ContificoService::class, $mockContifico3);
+
+        $this->assertTrue($creditClient->isBlockedForSales());
+    }
 }
+
 
 
 

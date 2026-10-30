@@ -12,7 +12,87 @@ class Client extends Model
         'credit_limit' => 'decimal:2',
         'credit_days' => 'integer',
         'is_active' => 'boolean',
+        'is_blocked' => 'boolean',
+        'unblocked_until' => 'datetime',
     ];
+
+    protected $appends = [
+        'unblock_time_remaining',
+    ];
+
+    public function isBlockedForSales(): bool
+    {
+        // Si el cliente tiene un desbloqueo temporal activo, no está bloqueado
+        if ($this->unblocked_until && \Carbon\Carbon::now()->lt($this->unblocked_until)) {
+            return false;
+        }
+
+        // Si está marcado manualmente como bloqueado
+        if ($this->is_blocked) {
+            return true;
+        }
+
+        if (empty($this->identification)) {
+            return false;
+        }
+
+        // Obtener la frecuencia configurada por el admin (1, 12 o 24 horas)
+        $syncHours = (int) \App\Models\Setting::get('CONTIFICO_SYNC_INTERVAL', 12);
+        if ($syncHours <= 0) {
+            $syncHours = 12;
+        }
+        $cacheSeconds = $syncHours * 3600;
+
+        // Clientes de contado (sin días de crédito o credit_days <= 0) tienen 3 días adicionales de plazo antes de bloquearse
+        $isCashClient = empty($this->credit_days) || $this->credit_days <= 0;
+        $graceDays = $isCashClient ? 3 : 0;
+
+        $cacheKey = 'client_blocked_contifico_' . md5($this->identification . '_' . ($this->credit_days ?? 0));
+
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, $cacheSeconds, function () use ($graceDays) {
+            try {
+                /** @var \App\Services\ContificoService $contificoService */
+                $contificoService = app(\App\Services\ContificoService::class);
+                $rawDocs = $contificoService->getPendingDocuments($this->identification);
+                $today = \Carbon\Carbon::today();
+
+                if (is_array($rawDocs)) {
+                    foreach ($rawDocs as $doc) {
+                        $fechaVencimientoStr = $doc['fecha_vencimiento'] ?? null;
+                        if ($fechaVencimientoStr) {
+                            try {
+                                $vencimiento = \Carbon\Carbon::createFromFormat('d/m/Y', $fechaVencimientoStr)->startOfDay();
+                                // Para clientes de contado, se suman 3 días adicionales antes de considerarla motivo de bloqueo
+                                if ($vencimiento->copy()->addDays($graceDays)->lt($today)) {
+                                    return true;
+                                }
+                            } catch (\Exception $e) {
+                                // Ignore date parse errors
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error("Error verificando facturas vencidas para cliente {$this->id}: " . $e->getMessage());
+            }
+
+            return false;
+        });
+    }
+
+    public function getIsBlockedForSalesAttribute(): bool
+    {
+        return $this->isBlockedForSales();
+    }
+
+    public function getUnblockTimeRemainingAttribute(): ?string
+    {
+        if ($this->unblocked_until && \Carbon\Carbon::now()->lt($this->unblocked_until)) {
+            return $this->unblocked_until->diffForHumans();
+        }
+        return null;
+    }
+
 
 
     public function branches()

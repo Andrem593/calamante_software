@@ -12,6 +12,7 @@ use App\Services\ContificoService;
 use App\Services\GoogleGeocodingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Inertia\Inertia;
 
@@ -895,6 +896,34 @@ class ReportController extends Controller
      */
     public function branchesGeolocation(Request $request, GoogleGeocodingService $geocoding)
     {
+        $isGenerated = $request->boolean('generate') || $request->filled('generate') || $request->filled('search') || $request->filled('has_geo');
+
+        if (!$isGenerated) {
+            $paginated = new LengthAwarePaginator(
+                [],
+                0,
+                30,
+                1,
+                ['path' => $request->url(), 'query' => $request->query()]
+            );
+
+            return Inertia::render('Admin/Reports/BranchesGeolocation', [
+                'branches' => $paginated,
+                'summary' => [
+                    'total_branches' => 0,
+                    'geolocated_count' => 0,
+                    'missing_geo_count' => 0,
+                    'sectors_count' => 0,
+                ],
+                'filters' => [
+                    'has_geo' => $request->has_geo ?? '',
+                    'search' => $request->search ?? '',
+                    'generate' => '',
+                ],
+                'is_generated' => false,
+            ]);
+        }
+
         $data = $this->getProcessedBranchesGeolocation($request, $geocoding);
         $branchesCollection = $data['branches'];
 
@@ -917,7 +946,9 @@ class ReportController extends Controller
             'filters' => [
                 'has_geo' => $request->has_geo ?? '',
                 'search' => $request->search ?? '',
+                'generate' => '1',
             ],
+            'is_generated' => true,
         ]);
     }
 
@@ -1082,6 +1113,141 @@ class ReportController extends Controller
         ]);
     }
 
+    protected function resolveFrequentLocationForBranch(Branch $branch): array
+    {
+        $client = $branch->client;
+
+        // 1. Obtener la ubicación de visitas más frecuente para esta sucursal (o cliente)
+        $visitCluster = Visit::select(
+                DB::raw('ROUND(latitude, 4) as lat_group'),
+                DB::raw('ROUND(longitude, 4) as lng_group'),
+                DB::raw('COUNT(*) as cnt'),
+                DB::raw('MAX(id) as last_visit_id'),
+                DB::raw('MAX(created_at) as last_time')
+            )
+            ->where('branch_id', $branch->id)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->where('latitude', '!=', 0)
+            ->groupBy(DB::raw('ROUND(latitude, 4), ROUND(longitude, 4)'))
+            ->orderByDesc('cnt')
+            ->orderByDesc('last_time')
+            ->first();
+
+        if (!$visitCluster && $client) {
+            $visitCluster = Visit::select(
+                    DB::raw('ROUND(latitude, 4) as lat_group'),
+                    DB::raw('ROUND(longitude, 4) as lng_group'),
+                    DB::raw('COUNT(*) as cnt'),
+                    DB::raw('MAX(id) as last_visit_id'),
+                    DB::raw('MAX(created_at) as last_time')
+                )
+                ->where('client_id', $client->id)
+                ->whereNotNull('latitude')
+                ->whereNotNull('longitude')
+                ->where('latitude', '!=', 0)
+                ->groupBy(DB::raw('ROUND(latitude, 4), ROUND(longitude, 4)'))
+                ->orderByDesc('cnt')
+                ->orderByDesc('last_time')
+                ->first();
+        }
+
+        // 2. Obtener la ubicación de ventas más frecuente para esta sucursal (o cliente)
+        $orderCluster = Order::select(
+                DB::raw('ROUND(latitude, 4) as lat_group'),
+                DB::raw('ROUND(longitude, 4) as lng_group'),
+                DB::raw('COUNT(*) as cnt'),
+                DB::raw('MAX(id) as last_order_id'),
+                DB::raw('MAX(created_at) as last_time')
+            )
+            ->where('branch_id', $branch->id)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->where('latitude', '!=', 0)
+            ->groupBy(DB::raw('ROUND(latitude, 4), ROUND(longitude, 4)'))
+            ->orderByDesc('cnt')
+            ->orderByDesc('last_time')
+            ->first();
+
+        if (!$orderCluster && $client) {
+            $orderCluster = Order::select(
+                    DB::raw('ROUND(latitude, 4) as lat_group'),
+                    DB::raw('ROUND(longitude, 4) as lng_group'),
+                    DB::raw('COUNT(*) as cnt'),
+                    DB::raw('MAX(id) as last_order_id'),
+                    DB::raw('MAX(created_at) as last_time')
+                )
+                ->where('client_id', $client->id)
+                ->whereNotNull('latitude')
+                ->whereNotNull('longitude')
+                ->where('latitude', '!=', 0)
+                ->groupBy(DB::raw('ROUND(latitude, 4), ROUND(longitude, 4)'))
+                ->orderByDesc('cnt')
+                ->orderByDesc('last_time')
+                ->first();
+        }
+
+        $latitude = null;
+        $longitude = null;
+        $geoSource = 'Sin coordenadas';
+        $interactionDate = null;
+
+        $useVisit = false;
+        $useOrder = false;
+
+        // Regla:
+        // Prioridad 1: Visita más frecuente (si cnt > 1).
+        // Prioridad 2: Venta más frecuente (si cnt > 1).
+        // Prioridad 3: Si solo se tiene 1 interacción (cnt == 1 en ambas o una), usar la interacción más reciente en el tiempo (última visita vs última venta).
+        if ($visitCluster && $visitCluster->cnt > 1) {
+            $useVisit = true;
+        } elseif ($orderCluster && $orderCluster->cnt > 1) {
+            $useOrder = true;
+        } elseif ($visitCluster && $orderCluster) {
+            if (Carbon::parse($visitCluster->last_time)->gte(Carbon::parse($orderCluster->last_time))) {
+                $useVisit = true;
+            } else {
+                $useOrder = true;
+            }
+        } elseif ($visitCluster) {
+            $useVisit = true;
+        } elseif ($orderCluster) {
+            $useOrder = true;
+        }
+
+        if ($useVisit && $visitCluster) {
+            $sampleVisit = Visit::find($visitCluster->last_visit_id);
+            if ($sampleVisit) {
+                $latitude = (float)$sampleVisit->latitude;
+                $longitude = (float)$sampleVisit->longitude;
+                $cnt = $visitCluster->cnt;
+                $geoSource = $cnt > 1 ? "Visita Frecuente ({$cnt} visitas)" : "Última Visita (#{$sampleVisit->id})";
+                $interactionDate = Carbon::parse($sampleVisit->created_at)->format('d/m/Y H:i');
+            }
+        } elseif ($useOrder && $orderCluster) {
+            $sampleOrder = Order::find($orderCluster->last_order_id);
+            if ($sampleOrder) {
+                $latitude = (float)$sampleOrder->latitude;
+                $longitude = (float)$sampleOrder->longitude;
+                $cnt = $orderCluster->cnt;
+                $geoSource = $cnt > 1 ? "Venta Frecuente ({$cnt} pedidos)" : "Última Venta (#{$sampleOrder->id})";
+                $interactionDate = Carbon::parse($sampleOrder->created_at)->format('d/m/Y H:i');
+            }
+        } elseif (!empty($branch->latitude) && !empty($branch->longitude)) {
+            $latitude = (float)$branch->latitude;
+            $longitude = (float)$branch->longitude;
+            $geoSource = "Ubicación de Sucursal";
+            $interactionDate = $branch->updated_at ? Carbon::parse($branch->updated_at)->format('d/m/Y') : 'N/A';
+        }
+
+        return [
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'geo_source' => $geoSource,
+            'interaction_date' => $interactionDate,
+        ];
+    }
+
     protected function getProcessedBranchesGeolocation(Request $request, GoogleGeocodingService $geocoding): array
     {
         $branches = Branch::with(['client'])->get();
@@ -1092,77 +1258,11 @@ class ReportController extends Controller
             $client = $branch->client;
             if (!$client) continue;
 
-            // Obtener la última venta con coordenadas para esta sucursal (o cliente)
-            $lastOrder = Order::where('branch_id', $branch->id)
-                ->whereNotNull('latitude')
-                ->whereNotNull('longitude')
-                ->where('latitude', '!=', 0)
-                ->orderBy('created_at', 'desc')
-                ->first();
-
-            if (!$lastOrder) {
-                $lastOrder = Order::where('client_id', $client->id)
-                    ->whereNotNull('latitude')
-                    ->whereNotNull('longitude')
-                    ->where('latitude', '!=', 0)
-                    ->orderBy('created_at', 'desc')
-                    ->first();
-            }
-
-            // Obtener la última visita con coordenadas para esta sucursal (o cliente)
-            $lastVisit = Visit::where('branch_id', $branch->id)
-                ->whereNotNull('latitude')
-                ->whereNotNull('longitude')
-                ->where('latitude', '!=', 0)
-                ->orderBy('created_at', 'desc')
-                ->first();
-
-            if (!$lastVisit) {
-                $lastVisit = Visit::where('client_id', $client->id)
-                    ->whereNotNull('latitude')
-                    ->whereNotNull('longitude')
-                    ->where('latitude', '!=', 0)
-                    ->orderBy('created_at', 'desc')
-                    ->first();
-            }
-
-            // Comparar y elegir la geolocalización más reciente
-            $latitude = null;
-            $longitude = null;
-            $geoSource = 'Sin coordenadas';
-            $interactionDate = null;
-
-            $orderTime = $lastOrder ? Carbon::parse($lastOrder->created_at) : null;
-            $visitTime = $lastVisit ? Carbon::parse($lastVisit->created_at) : null;
-
-            if ($orderTime && $visitTime) {
-                if ($orderTime->gt($visitTime)) {
-                    $latitude = (float)$lastOrder->latitude;
-                    $longitude = (float)$lastOrder->longitude;
-                    $geoSource = "Última Venta (#{$lastOrder->id})";
-                    $interactionDate = $orderTime->format('d/m/Y H:i');
-                } else {
-                    $latitude = (float)$lastVisit->latitude;
-                    $longitude = (float)$lastVisit->longitude;
-                    $geoSource = "Última Visita (#{$lastVisit->id})";
-                    $interactionDate = $visitTime->format('d/m/Y H:i');
-                }
-            } elseif ($orderTime) {
-                $latitude = (float)$lastOrder->latitude;
-                $longitude = (float)$lastOrder->longitude;
-                $geoSource = "Última Venta (#{$lastOrder->id})";
-                $interactionDate = $orderTime->format('d/m/Y H:i');
-            } elseif ($visitTime) {
-                $latitude = (float)$lastVisit->latitude;
-                $longitude = (float)$lastVisit->longitude;
-                $geoSource = "Última Visita (#{$lastVisit->id})";
-                $interactionDate = $visitTime->format('d/m/Y H:i');
-            } elseif (!empty($branch->latitude) && !empty($branch->longitude)) {
-                $latitude = (float)$branch->latitude;
-                $longitude = (float)$branch->longitude;
-                $geoSource = "Ubicación de Sucursal";
-                $interactionDate = $branch->updated_at ? Carbon::parse($branch->updated_at)->format('d/m/Y') : 'N/A';
-            }
+            $geoInfo = $this->resolveFrequentLocationForBranch($branch);
+            $latitude = $geoInfo['latitude'];
+            $longitude = $geoInfo['longitude'];
+            $geoSource = $geoInfo['geo_source'];
+            $interactionDate = $geoInfo['interaction_date'];
 
             $sector = 'Sin especificar';
             $parroquia = 'Sin especificar';
@@ -1257,9 +1357,9 @@ class ReportController extends Controller
         ];
     }
 
-    public function presaleDirectSale(Request $request)
+    public function presaleDirectSale(Request $request, ContificoService $contifico)
     {
-        $data = $this->getPresaleDirectSaleData($request);
+        $data = $this->getPresaleDirectSaleData($request, $contifico);
 
         return Inertia::render('Admin/Reports/PresaleDirectSale', [
             'reportData' => $data['reportData'],
@@ -1274,9 +1374,9 @@ class ReportController extends Controller
         ]);
     }
 
-    public function exportPresaleDirectSale(Request $request)
+    public function exportPresaleDirectSale(Request $request, ContificoService $contifico)
     {
-        $data = $this->getPresaleDirectSaleData($request);
+        $data = $this->getPresaleDirectSaleData($request, $contifico);
         $reportData = $data['reportData'];
         $products = $data['products'];
         $totals = $data['totals'];
@@ -1518,7 +1618,7 @@ class ReportController extends Controller
         ]);
     }
 
-    private function getPresaleDirectSaleData(Request $request)
+    private function getPresaleDirectSaleData(Request $request, ?ContificoService $contifico = null)
     {
         $todayStr = Carbon::now()->format('Y-m-d');
         if ($request->mode === 'range' || ($request->date_from && $request->date_to)) {
@@ -1539,6 +1639,10 @@ class ReportController extends Controller
             ->orderBy('id')
             ->get(['id', 'name']);
 
+        $productContificoMap = \App\Models\Product::whereNotNull('contifico_id')
+            ->pluck('id', 'contifico_id')
+            ->toArray();
+
         // Sellers: Users with role seller OR who have created orders/visits
         $sellers = User::where(function($q) {
                 $q->where('role', 'seller')
@@ -1548,22 +1652,318 @@ class ReportController extends Controller
             ->orderBy('name')
             ->get(['id', 'name']);
 
+        $sellerIds = $sellers->pluck('id')->toArray();
+
         // Prefetch visits grouped by user_id
         $visitsGrouped = Visit::whereBetween('created_at', [$from, $to])
             ->selectRaw('user_id, count(*) as total')
             ->groupBy('user_id')
             ->pluck('total', 'user_id');
 
-        // Prefetch orders with items in range (exclude cancelled)
+        // Fetch local DB orders for the range (exclude cancelled)
         $orders = Order::with('items')
             ->whereBetween('created_at', [$from, $to])
             ->where('status', '!=', 'cancelled')
             ->get();
 
-        $ordersGrouped = $orders->groupBy('user_id');
+        // Fetch cancelled orders for the range to keep track of their contifico_id and order_id
+        $cancelledOrderIds = Order::whereBetween('created_at', [$from, $to])
+            ->where('status', 'cancelled')
+            ->pluck('id')
+            ->toArray();
 
-        $reportData = [];
+        $cancelledContificoIds = Order::whereBetween('created_at', [$from, $to])
+            ->where('status', 'cancelled')
+            ->pluck('contifico_id')
+            ->filter()
+            ->toArray();
 
+        // Fetch Contifico direct invoices if ContificoService is available
+        $contificoInvoices = [];
+        if ($contifico) {
+            try {
+                $forceRefresh = $request->boolean('refresh');
+                $rawInvoices = $contifico->fetchInvoices(
+                    $dateFromStr,
+                    $dateToStr,
+                    $forceRefresh
+                );
+                if (!empty($rawInvoices) && is_array($rawInvoices)) {
+                    foreach ($rawInvoices as $inv) {
+                        // Exclude cancelled/voided invoices in Contifico
+                        $isAnulado = !empty($inv['anulado']) || in_array($inv['estado'] ?? '', ['AN', 'A', 'E']);
+                        $docTotal = (float)($inv['total'] ?? 0);
+                        // Excluir si está anulada o si tiene total negativo
+                        if ($isAnulado || $docTotal < 0) {
+                            continue;
+                        }
+                        // Si el total es 0, solo incluirla si tiene ítems/detalles entregados (ej. donaciones o promociones al 100%)
+                        if ($docTotal == 0 && empty($inv['detalles'])) {
+                            continue;
+                        }
+                        $contificoInvoices[] = $inv;
+                    }
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Could not fetch Contifico direct invoices for report: " . $e->getMessage());
+            }
+        }
+
+        // Create index maps for Contifico invoices
+        $contificoInvById = [];
+        $contificoInvByPedidoId = [];
+        foreach ($contificoInvoices as $inv) {
+            if (!empty($inv['id'])) {
+                $contificoInvById[$inv['id']] = $inv;
+            }
+            $invDesc = $inv['descripcion'] ?? '';
+            if (preg_match('/Pedido\s*#(\d+)/i', $invDesc, $matches)) {
+                $pId = (int)$matches[1];
+                $contificoInvByPedidoId[$pId] = $inv;
+            }
+        }
+
+        $processedContificoInvIds = [];
+
+        // Build seller structure
+        $sellerDataMap = [];
+        foreach ($sellers as $seller) {
+            $sellerDataMap[$seller->id] = [
+                'user_id' => $seller->id,
+                'seller_name' => $seller->name,
+                'visits' => (int)($visitsGrouped[$seller->id] ?? 0),
+                'orders_count' => 0,
+                'invoiced_amount' => 0.0,
+                'preinvoiced_amount' => 0.0,
+                'cash_amount' => 0.0,
+                'credit_amount' => 0.0,
+                'transfer_amount' => 0.0,
+                'total_amount' => 0.0,
+                'product_quantities' => array_fill_keys($products->pluck('id')->toArray(), 0),
+                'total_items' => 0,
+            ];
+        }
+
+        $contificoRow = [
+            'user_id' => 'contifico',
+            'seller_name' => 'Ventas en Contifico',
+            'visits' => 0,
+            'orders_count' => 0,
+            'invoiced_amount' => 0.0,
+            'preinvoiced_amount' => 0.0,
+            'cash_amount' => 0.0,
+            'credit_amount' => 0.0,
+            'transfer_amount' => 0.0,
+            'total_amount' => 0.0,
+            'product_quantities' => array_fill_keys($products->pluck('id')->toArray(), 0),
+            'total_items' => 0,
+        ];
+
+        if (!empty($contificoInvoices)) {
+            // =========================================================================
+            // CONTIFICO COMO FUENTE DE LA VERDAD (CUADRE 100% EN DÓLARES Y EN ÍTEMS)
+            // =========================================================================
+            $ordersByContificoId = [];
+            $ordersById = [];
+            foreach ($orders as $ord) {
+                if (!empty($ord->contifico_id)) {
+                    $ordersByContificoId[$ord->contifico_id] = $ord;
+                }
+                $ordersById[$ord->id] = $ord;
+            }
+
+            $invoicedLocalOrderIds = [];
+
+            // Procesar cada factura válida de Contifico
+            foreach ($contificoInvoices as $inv) {
+                $invId = $inv['id'] ?? '';
+                $desc = $inv['descripcion'] ?? '';
+                $vend = is_array($inv['vendedor'] ?? null) ? json_encode($inv['vendedor']) : (string)($inv['vendedor'] ?? '');
+                $docTotal = (float)($inv['total'] ?? 0);
+
+                $sellerId = null;
+                $matchedOrder = null;
+
+                // Prioridad 1: Match por contifico_id del pedido en la app
+                if (!empty($invId) && isset($ordersByContificoId[$invId])) {
+                    $matchedOrder = $ordersByContificoId[$invId];
+                    if ($matchedOrder->user_id && isset($sellerDataMap[$matchedOrder->user_id])) {
+                        $sellerId = $matchedOrder->user_id;
+                    }
+                }
+
+                // Prioridad 2: Match por 'Pedido #XXX' en la descripción
+                if (!$sellerId && preg_match('/Pedido\s*#(\d+)/i', $desc, $matches)) {
+                    $pId = (int)$matches[1];
+                    if (isset($ordersById[$pId])) {
+                        $matchedOrder = $ordersById[$pId];
+                        if ($matchedOrder->user_id && isset($sellerDataMap[$matchedOrder->user_id])) {
+                            $sellerId = $matchedOrder->user_id;
+                        }
+                    }
+                }
+
+                // Prioridad 3: Match por 'Atendido por: Nombre Vendedor' en la descripción
+                if (!$sellerId && preg_match('/Atendido por:\s*([^-\n]+)/i', $desc, $matches)) {
+                    $atendido = trim($matches[1]);
+                    foreach ($sellers as $s) {
+                        if (mb_stripos($atendido, $s->name) !== false || mb_stripos($s->name, $atendido) !== false) {
+                            $sellerId = $s->id;
+                            break;
+                        }
+                    }
+                }
+
+                // Prioridad 4: Match por campo 'vendedor' de Contifico
+                if (!$sellerId && !empty($vend)) {
+                    foreach ($sellers as $s) {
+                        $parts = explode(' ', strtolower($s->name));
+                        $matchParts = 0;
+                        foreach ($parts as $p) {
+                            if (strlen($p) > 2 && str_contains(strtolower($vend), $p)) {
+                                $matchParts++;
+                            }
+                        }
+                        if ($matchParts >= 2 || ($matchParts >= 1 && count($parts) == 1)) {
+                            $sellerId = $s->id;
+                            break;
+                        }
+                    }
+                }
+
+                // Prioridad 5: Match por 'Vendedor: Nombre' en descripción
+                if (!$sellerId && preg_match('/Vendedor:\s*([^-\n]+)/i', $desc, $matches)) {
+                    $vendedorDesc = trim($matches[1]);
+                    foreach ($sellers as $s) {
+                        if (mb_stripos($vendedorDesc, $s->name) !== false || mb_stripos($s->name, $vendedorDesc) !== false) {
+                            $sellerId = $s->id;
+                            break;
+                        }
+                    }
+                }
+
+                // Prioridad 6: Nombre del vendedor mencionado en cualquier parte de la descripción
+                if (!$sellerId) {
+                    foreach ($sellers as $s) {
+                        if (mb_stripos($desc, $s->name) !== false) {
+                            $sellerId = $s->id;
+                            break;
+                        }
+                    }
+                }
+
+                if ($matchedOrder) {
+                    $invoicedLocalOrderIds[] = $matchedOrder->id;
+                }
+
+                // Asignar al vendedor correspondiente o a "Ventas en Contifico"
+                if ($sellerId && isset($sellerDataMap[$sellerId])) {
+                    $targetRow = &$sellerDataMap[$sellerId];
+                } else {
+                    $targetRow = &$contificoRow;
+                }
+
+                $targetRow['orders_count']++;
+                $targetRow['invoiced_amount'] += $docTotal;
+                $targetRow['total_amount'] += $docTotal;
+
+                // Forma de Pago (Crédito, Transferencia, Contado)
+                $emision = $inv['fecha_emision'] ?? null;
+                $vencimiento = $inv['fecha_vencimiento'] ?? null;
+                $cobros = $inv['cobros'] ?? [];
+                $formaCobro = !empty($cobros) ? mb_strtoupper($cobros[0]['forma_cobro'] ?? $cobros[0]['forma_pago'] ?? '') : '';
+                $pm = mb_strtoupper($inv['forma_pago'] ?? $inv['metodo_pago'] ?? '');
+
+                if ($matchedOrder && (($matchedOrder->credit_days ?? 0) > 0 || str_contains(strtolower($matchedOrder->payment_method ?? ''), 'cred'))) {
+                    $targetRow['credit_amount'] += $docTotal;
+                } elseif (($emision && $vencimiento && $emision !== $vencimiento) || ($inv['dias_vencimiento'] ?? 0) > 0 || str_contains($pm, 'CRED') || str_contains($pm, 'CRÉD') || str_contains($formaCobro, 'CRED') || str_contains($formaCobro, 'CRÉD')) {
+                    $targetRow['credit_amount'] += $docTotal;
+                } elseif (str_contains($pm, 'TRANSF') || str_contains($pm, 'BANCO') || str_contains($pm, 'DEPOSITO') || str_contains($pm, 'DEPÓSITO') || str_contains($formaCobro, 'TRA') || str_contains($formaCobro, 'DEP')) {
+                    $targetRow['transfer_amount'] += $docTotal;
+                } else {
+                    $targetRow['cash_amount'] += $docTotal;
+                }
+
+                // Ítems vendidos directamente desde los detalles de la factura de Contifico
+                if (!empty($inv['detalles']) && is_array($inv['detalles'])) {
+                    foreach ($inv['detalles'] as $det) {
+                        $cProdId = $det['producto_id'] ?? null;
+                        $qty = (int)($det['cantidad'] ?? 0);
+                        if ($cProdId && isset($productContificoMap[$cProdId])) {
+                            $localPId = $productContificoMap[$cProdId];
+                            if (isset($targetRow['product_quantities'][$localPId])) {
+                                $targetRow['product_quantities'][$localPId] += $qty;
+                            }
+                        }
+                        $targetRow['total_items'] += $qty;
+                    }
+                }
+
+                unset($targetRow);
+            }
+
+            // Procesar pedidos locales que NO fueron facturados en Contifico (Pre-facturas de la app)
+            foreach ($orders as $ord) {
+                if (in_array($ord->id, $invoicedLocalOrderIds)) {
+                    continue;
+                }
+                if ($ord->status === 'cancelled') {
+                    continue;
+                }
+                if ($ord->user_id && isset($sellerDataMap[$ord->user_id])) {
+                    $sellerDataMap[$ord->user_id]['orders_count']++;
+                    $sellerDataMap[$ord->user_id]['preinvoiced_amount'] += (float)$ord->total;
+                }
+            }
+
+            $contificoRow['total_amount'] = $contificoRow['invoiced_amount'];
+
+        } else {
+            // =========================================================================
+            // FALLBACK LOCAL DB (Si Contifico estuviese desconectado o sin facturas)
+            // =========================================================================
+            $ordersGrouped = $orders->groupBy('user_id');
+            foreach ($sellers as $seller) {
+                $userOrders = $ordersGrouped->get($seller->id, collect());
+                $sellerData = &$sellerDataMap[$seller->id];
+
+                foreach ($userOrders as $ord) {
+                    $ordTotal = (float)$ord->total;
+                    if ($ord->is_invoiced) {
+                        $sellerData['orders_count']++;
+                        $sellerData['invoiced_amount'] += $ordTotal;
+
+                        $pm = mb_strtolower($ord->payment_method ?? '');
+                        if (str_contains($pm, 'cred') || ($ord->credit_days ?? 0) > 0) {
+                            $sellerData['credit_amount'] += $ordTotal;
+                        } elseif (str_contains($pm, 'transf') || str_contains($pm, 'banco') || str_contains($pm, 'deposito')) {
+                            $sellerData['transfer_amount'] += $ordTotal;
+                        } else {
+                            $sellerData['cash_amount'] += $ordTotal;
+                        }
+
+                        foreach ($ord->items as $item) {
+                            $pId = $item->product_id;
+                            $qty = (int)$item->quantity;
+                            if (isset($sellerData['product_quantities'][$pId])) {
+                                $sellerData['product_quantities'][$pId] += $qty;
+                            }
+                            $sellerData['total_items'] += $qty;
+                        }
+                    } else {
+                        $sellerData['orders_count']++;
+                        $sellerData['preinvoiced_amount'] += $ordTotal;
+                    }
+                }
+                $sellerData['total_amount'] = $sellerData['invoiced_amount'];
+                unset($sellerData);
+            }
+        }
+
+        $reportData = array_values($sellerDataMap);
+        $reportData[] = $contificoRow;
+
+        // Build global totals
         $totals = [
             'visits' => 0,
             'orders_count' => 0,
@@ -1573,98 +1973,37 @@ class ReportController extends Controller
             'credit_amount' => 0.0,
             'transfer_amount' => 0.0,
             'total_amount' => 0.0,
-            'product_quantities' => [],
+            'product_quantities' => array_fill_keys($products->pluck('id')->toArray(), 0),
             'total_items' => 0,
         ];
 
-        foreach ($products as $p) {
-            $totals['product_quantities'][$p->id] = 0;
-        }
+        foreach ($reportData as $row) {
+            $totals['visits'] += $row['visits'];
+            $totals['orders_count'] += $row['orders_count'];
+            $totals['invoiced_amount'] += $row['invoiced_amount'];
+            $totals['preinvoiced_amount'] += $row['preinvoiced_amount'];
+            $totals['cash_amount'] += $row['cash_amount'];
+            $totals['credit_amount'] += $row['credit_amount'];
+            $totals['transfer_amount'] += $row['transfer_amount'];
+            $totals['total_amount'] += $row['total_amount'];
+            $totals['total_items'] += $row['total_items'];
 
-        foreach ($sellers as $seller) {
-            $userVisits = (int)($visitsGrouped[$seller->id] ?? 0);
-            $userOrders = $ordersGrouped->get($seller->id, collect());
-
-            $ordersCount = $userOrders->count();
-            $invoicedAmount = 0.0;
-            $preinvoicedAmount = 0.0;
-            $cashAmount = 0.0;
-            $creditAmount = 0.0;
-            $transferAmount = 0.0;
-
-            $productQuantities = [];
-            foreach ($products as $p) {
-                $productQuantities[$p->id] = 0;
-            }
-            $totalItems = 0;
-
-            foreach ($userOrders as $ord) {
-                $ordTotal = (float)$ord->total;
-                
-                // Invoiced vs Preinvoiced
-                if ($ord->is_invoiced) {
-                    $invoicedAmount += $ordTotal;
-                } else {
-                    $preinvoicedAmount += $ordTotal;
-                }
-
-                // Payment method
-                $pm = mb_strtolower($ord->payment_method ?? '');
-                if (str_contains($pm, 'cred') || str_contains($pm, 'créd') || ($ord->credit_days ?? 0) > 0) {
-                    $creditAmount += $ordTotal;
-                } elseif (str_contains($pm, 'transf') || str_contains($pm, 'banco') || str_contains($pm, 'deposito') || str_contains($pm, 'depósito')) {
-                    $transferAmount += $ordTotal;
-                } else {
-                    $cashAmount += $ordTotal;
-                }
-
-                // Order items
-                foreach ($ord->items as $item) {
-                    $pId = $item->product_id;
-                    $qty = (int)$item->quantity;
-                    if (isset($productQuantities[$pId])) {
-                        $productQuantities[$pId] += $qty;
-                    } else {
-                        $productQuantities[$pId] = $qty;
-                    }
-                    $totalItems += $qty;
-                }
-            }
-
-            $totalAmount = $invoicedAmount + $preinvoicedAmount;
-
-            $reportData[] = [
-                'user_id' => $seller->id,
-                'seller_name' => $seller->name,
-                'visits' => $userVisits,
-                'orders_count' => $ordersCount,
-                'invoiced_amount' => round($invoicedAmount, 2),
-                'preinvoiced_amount' => round($preinvoicedAmount, 2),
-                'cash_amount' => round($cashAmount, 2),
-                'credit_amount' => round($creditAmount, 2),
-                'transfer_amount' => round($transferAmount, 2),
-                'total_amount' => round($totalAmount, 2),
-                'product_quantities' => $productQuantities,
-                'total_items' => $totalItems,
-            ];
-
-            // Accumulate global totals
-            $totals['visits'] += $userVisits;
-            $totals['orders_count'] += $ordersCount;
-            $totals['invoiced_amount'] += $invoicedAmount;
-            $totals['preinvoiced_amount'] += $preinvoicedAmount;
-            $totals['cash_amount'] += $cashAmount;
-            $totals['credit_amount'] += $creditAmount;
-            $totals['transfer_amount'] += $transferAmount;
-            $totals['total_amount'] += $totalAmount;
-            $totals['total_items'] += $totalItems;
-
-            foreach ($productQuantities as $pId => $qty) {
+            foreach ($row['product_quantities'] as $pId => $qty) {
                 if (!isset($totals['product_quantities'][$pId])) {
                     $totals['product_quantities'][$pId] = 0;
                 }
                 $totals['product_quantities'][$pId] += $qty;
             }
+        }
+
+        // Round all amounts
+        foreach ($reportData as &$row) {
+            $row['invoiced_amount'] = round($row['invoiced_amount'], 2);
+            $row['preinvoiced_amount'] = round($row['preinvoiced_amount'], 2);
+            $row['cash_amount'] = round($row['cash_amount'], 2);
+            $row['credit_amount'] = round($row['credit_amount'], 2);
+            $row['transfer_amount'] = round($row['transfer_amount'], 2);
+            $row['total_amount'] = round($row['total_amount'], 2);
         }
 
         $totals['invoiced_amount'] = round($totals['invoiced_amount'], 2);
@@ -1682,6 +2021,576 @@ class ReportController extends Controller
             'dateFromStr' => $dateFromStr,
             'dateToStr' => $dateToStr,
         ];
+    }
+
+    public function routeMap(Request $request, GoogleGeocodingService $geocoding)
+    {
+        $data = $this->getProcessedRouteMapData($request, $geocoding);
+
+        return Inertia::render('Admin/Reports/RouteMap', [
+            'branches' => $data['branches'],
+            'available_routes' => $data['available_routes'],
+            'selected_routes' => $data['selected_routes'],
+            'product_breakdown' => $data['product_breakdown'],
+            'monthly_sales' => $data['monthly_sales'],
+            'summary' => $data['summary'],
+            'filters' => $request->only('routes', 'from', 'to', 'search'),
+            'google_maps_api_key' => config('services.google.maps_api_key') ?? env('GOOGLE_MAPS_API_KEY', ''),
+        ]);
+    }
+
+    public function exportRouteMap(Request $request, GoogleGeocodingService $geocoding)
+    {
+        $data = $this->getProcessedRouteMapData($request, $geocoding);
+        $branches = $data['branches'];
+        $productBreakdown = $data['product_breakdown'];
+        $selectedRoutes = $data['selected_routes'];
+        $summary = $data['summary'];
+
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        
+        // Hoja 1: Clientes y Coordenadas por Ruta
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Sucursales en Ruta');
+
+        $sheet->setCellValue('A1', 'REPORTE VISUAL DE RUTA Y GEOLOCALIZACIÓN');
+        $sheet->mergeCells('A1:K1');
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+
+        $routesStr = !empty($selectedRoutes) ? implode(', ', $selectedRoutes) : 'Sin Selección';
+        $sheet->setCellValue('A2', "Rutas Seleccionadas: " . $routesStr);
+        $sheet->setCellValue('A3', "Total Ventas en Ruta: $" . number_format($summary['total_sales'], 2));
+        $sheet->setCellValue('A4', "Total Pedidos: " . $summary['total_orders']);
+
+        $headers = ['ID', 'Cliente', 'Identificación', 'Sucursal', 'Ruta', 'Ventas ($)', 'Pedidos (#)', 'Origen / Punto Frecuente', 'Última Interacción', 'Coordenadas (Lat, Lng)', 'Sector / Barrio'];
+        $colIndex = 'A';
+        foreach ($headers as $h) {
+            $sheet->setCellValue($colIndex . '6', $h);
+            $sheet->getStyle($colIndex . '6')->getFont()->setBold(true);
+            $sheet->getStyle($colIndex . '6')->getFill()
+                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                ->getStartColor()->setARGB('F1F5F9');
+            $colIndex++;
+        }
+
+        $row = 7;
+        foreach ($branches as $b) {
+            $sheet->setCellValue('A' . $row, '#' . $b['id']);
+            $sheet->setCellValue('B' . $row, $b['client_name']);
+            $sheet->setCellValue('C' . $row, $b['client_identification']);
+            $sheet->setCellValue('D' . $row, $b['branch_name']);
+            $sheet->setCellValue('E' . $row, $b['route'] ?? 'N/A');
+            $sheet->setCellValue('F' . $row, $b['total_sales']);
+            $sheet->getStyle('F' . $row)->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->setCellValue('G' . $row, $b['orders_count']);
+            $sheet->setCellValue('H' . $row, $b['geo_source'] ?? 'Sin información');
+            $sheet->setCellValue('I' . $row, $b['last_interaction_date'] ?? 'N/A');
+            $sheet->setCellValue('J' . $row, $b['has_geo'] ? "{$b['latitude']}, {$b['longitude']}" : 'Sin Coordenadas');
+            $sheet->setCellValue('K' . $row, $b['sector'] ?? 'Sin Especificar');
+            $row++;
+        }
+
+        // Hoja 2: Desglose de Ventas por Producto
+        $sheet2 = $spreadsheet->createSheet();
+        $sheet2->setTitle('Ventas por Producto');
+        $sheet2->setCellValue('A1', 'DESGLOSE DE VENTAS POR PRODUCTO EN LA RUTA');
+        $sheet2->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+
+        $headers2 = ['Producto', 'Unidades Vendidas', 'Total Recaudado ($)', '% Participación'];
+        $colIndex = 'A';
+        foreach ($headers2 as $h) {
+            $sheet2->setCellValue($colIndex . '3', $h);
+            $sheet2->getStyle($colIndex . '3')->getFont()->setBold(true);
+            $colIndex++;
+        }
+
+        $row2 = 4;
+        foreach ($productBreakdown as $pb) {
+            $sheet2->setCellValue('A' . $row2, $pb['name']);
+            $sheet2->setCellValue('B' . $row2, $pb['quantity']);
+            $sheet2->setCellValue('C' . $row2, $pb['total']);
+            $sheet2->getStyle('C' . $row2)->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet2->setCellValue('D' . $row2, $pb['share_percentage'] . '%');
+            $row2++;
+        }
+
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        $fileName = 'Reporte_Ruta_Geolocalizacion_' . date('Ymd_His') . '.xlsx';
+        $tempPath = storage_path('app/public/' . $fileName);
+
+        if (!file_exists(dirname($tempPath))) {
+            mkdir(dirname($tempPath), 0755, true);
+        }
+
+        $writer->save($tempPath);
+        return response()->download($tempPath)->deleteFileAfterSend(true);
+    }
+
+    protected function getProcessedRouteMapData(Request $request, GoogleGeocodingService $geocoding): array
+    {
+        $availableRoutes = Branch::whereNotNull('route')
+            ->where('route', '!=', '')
+            ->distinct()
+            ->pluck('route')
+            ->sort()
+            ->values()
+            ->toArray();
+
+        // Obtener rutas seleccionadas
+        $selectedRoutes = [];
+        if ($request->has('routes')) {
+            $raw = $request->input('routes');
+            if (is_array($raw)) {
+                $selectedRoutes = array_filter($raw);
+            } elseif (is_string($raw) && trim($raw) !== '') {
+                $selectedRoutes = array_filter(explode(',', $raw));
+            }
+        }
+
+        // Rango de fechas
+        $dateFromStr = $request->from ?: Carbon::now()->startOfMonth()->toDateString();
+        $dateToStr = $request->to ?: Carbon::now()->endOfMonth()->toDateString();
+
+        // Si no hay ninguna ruta seleccionada, no cargar la información inicialmente
+        if (empty($selectedRoutes)) {
+            return [
+                'branches' => [],
+                'available_routes' => $availableRoutes,
+                'selected_routes' => [],
+                'product_breakdown' => [],
+                'monthly_sales' => [],
+                'summary' => [
+                    'total_sales' => 0.0,
+                    'total_orders' => 0,
+                    'total_branches' => 0,
+                    'geolocated_count' => 0,
+                    'top_product' => 'N/A',
+                ],
+            ];
+        }
+
+        $query = Branch::with(['client']);
+        if (!in_array('all', $selectedRoutes)) {
+            $query->whereIn('route', $selectedRoutes);
+        }
+
+        $branches = $query->get();
+        $processed = collect();
+        $totalRouteSales = 0.0;
+        $totalRouteOrders = 0;
+        $productSalesMap = [];
+
+        foreach ($branches as $branch) {
+            $client = $branch->client;
+            if (!$client) continue;
+
+            $geoInfo = $this->resolveFrequentLocationForBranch($branch);
+            $latitude = $geoInfo['latitude'];
+            $longitude = $geoInfo['longitude'];
+            $geoSource = $geoInfo['geo_source'];
+            $interactionDate = $geoInfo['interaction_date'];
+
+            // Ventas y pedidos del cliente/sucursal en el periodo seleccionado
+            $clientOrdersQuery = Order::with('items.product')
+                ->where('status', '!=', 'cancelled')
+                ->where(function($q) use ($branch, $client) {
+                    $q->where('branch_id', $branch->id)
+                      ->orWhere('client_id', $client->id);
+                })
+                ->whereDate('created_at', '>=', $dateFromStr)
+                ->whereDate('created_at', '<=', $dateToStr);
+
+            $clientOrders = $clientOrdersQuery->get();
+            $branchSalesTotal = $clientOrders->sum('total');
+            $branchOrdersCount = $clientOrders->count();
+
+            $totalRouteSales += $branchSalesTotal;
+            $totalRouteOrders += $branchOrdersCount;
+
+            // Agrupar desglose por producto para la ruta
+            foreach ($clientOrders as $ord) {
+                foreach ($ord->items as $item) {
+                    $pId = $item->product_id;
+                    $pName = $item->product?->name ?? 'Producto';
+                    $qty = (int)$item->quantity;
+                    $subtotal = (float)$item->price * $qty;
+
+                    if (!isset($productSalesMap[$pId])) {
+                        $productSalesMap[$pId] = [
+                            'id' => $pId,
+                            'name' => $pName,
+                            'quantity' => 0,
+                            'total' => 0.0,
+                        ];
+                    }
+                    $productSalesMap[$pId]['quantity'] += $qty;
+                    $productSalesMap[$pId]['total'] += $subtotal;
+                }
+            }
+
+            $sector = $branch->sector ?? 'Sin especificar';
+            $parroquia = $branch->parroquia ?? 'Sin especificar';
+
+            $processed->push([
+                'id' => $branch->id,
+                'code' => $branch->code,
+                'branch_name' => $branch->name,
+                'route' => $branch->route,
+                'address' => $branch->address,
+                'client_id' => $client->id,
+                'client_name' => $client->name,
+                'client_identification' => $client->identification,
+                'has_geo' => !empty($latitude) && !empty($longitude),
+                'latitude' => $latitude,
+                'longitude' => $longitude,
+                'geo_source' => $geoSource,
+                'last_interaction_date' => $interactionDate,
+                'sector' => $sector,
+                'parroquia' => $parroquia,
+                'total_sales' => round($branchSalesTotal, 2),
+                'orders_count' => $branchOrdersCount,
+            ]);
+        }
+
+        // Filtro adicional de búsqueda en los items procesados
+        if ($request->search) {
+            $s = strtolower(trim($request->search));
+            $processed = $processed->filter(function ($item) use ($s) {
+                return str_contains(strtolower($item['client_name']), $s) ||
+                    str_contains(strtolower($item['branch_name']), $s) ||
+                    str_contains(strtolower($item['route'] ?? ''), $s) ||
+                    str_contains(strtolower($item['sector']), $s);
+            });
+        }
+
+        // Desglose de Productos
+        $productBreakdown = collect($productSalesMap)->values()->map(function($item) use ($totalRouteSales) {
+            $item['total'] = round($item['total'], 2);
+            $item['share_percentage'] = $totalRouteSales > 0 ? round(($item['total'] / $totalRouteSales) * 100, 1) : 0;
+            return $item;
+        })->sortByDesc('total')->values()->toArray();
+
+        // Ventas Mensuales históricas de la Ruta (últimos 6 meses)
+        $monthlySalesQuery = Order::select(
+                DB::raw("DATE_FORMAT(created_at, '%Y-%m') as ym"),
+                DB::raw("SUM(total) as total")
+            )
+            ->where('status', '!=', 'cancelled')
+            ->where('created_at', '>=', Carbon::now()->subMonths(6)->startOfMonth());
+
+        if (!empty($selectedRoutes) && !in_array('all', $selectedRoutes)) {
+            $branchIdsInRoute = $branches->pluck('id')->toArray();
+            $monthlySalesQuery->whereIn('branch_id', $branchIdsInRoute);
+        }
+
+        $monthlySalesRaw = $monthlySalesQuery->groupBy('ym')->orderBy('ym')->get();
+        $monthlySales = [];
+        foreach ($monthlySalesRaw as $m) {
+            $dateObj = Carbon::createFromFormat('Y-m', $m->ym);
+            $monthlySales[] = [
+                'month' => $dateObj->locale('es')->shortMonthName . ' ' . $dateObj->format('Y'),
+                'total' => round((float)$m->total, 2),
+            ];
+        }
+
+        $topProduct = $productBreakdown[0]['name'] ?? 'N/A';
+
+        $summary = [
+            'total_sales' => round($totalRouteSales, 2),
+            'total_orders' => $totalRouteOrders,
+            'total_branches' => $processed->count(),
+            'geolocated_count' => $processed->where('has_geo', true)->count(),
+            'top_product' => $topProduct,
+        ];
+
+        return [
+            'branches' => $processed->sortByDesc('total_sales')->values(),
+            'available_routes' => $availableRoutes,
+            'selected_routes' => $selectedRoutes,
+            'product_breakdown' => $productBreakdown,
+            'monthly_sales' => $monthlySales,
+            'summary' => $summary,
+        ];
+    }
+
+    public function ordersRoutes(Request $request)
+    {
+        [$query, $from, $to, $dateType, $docType, $userIds, $routes] = $this->getOrdersRoutesBaseQuery($request);
+
+        $totalSales = (float) (clone $query)->sum('orders.total');
+        $totalCount = (int) (clone $query)->count();
+
+        // Desglose por tipo de facturación
+        $invoicedQuery = (clone $query)->where(function($q) {
+            $q->where('orders.is_invoiced', true)->orWhere('orders.status', 'invoiced');
+        });
+        $invoicedCount = (int) (clone $invoicedQuery)->count();
+        $invoicedTotal = (float) (clone $invoicedQuery)->sum('orders.total');
+
+        $preinvoicedQuery = (clone $query)->where('orders.is_preinvoiced', true);
+        $preinvoicedCount = (int) (clone $preinvoicedQuery)->count();
+        $preinvoicedTotal = (float) (clone $preinvoicedQuery)->sum('orders.total');
+
+        $pendingCount = max(0, $totalCount - ($invoicedCount + $preinvoicedCount));
+        $pendingTotal = max(0, $totalSales - ($invoicedTotal + $preinvoicedTotal));
+
+        // Desglose por rutas (compatible con sql_mode=only_full_group_by)
+        $subQuery = (clone $query)
+            ->reorder()
+            ->select('orders.total')
+            ->selectRaw("COALESCE(branches.route, (SELECT b.route FROM branches b WHERE b.client_id = orders.client_id AND b.route IS NOT NULL LIMIT 1), 'SIN RUTA') as route_name");
+
+        $routeSummaryRaw = DB::table(DB::raw("(" . $subQuery->toSql() . ") as sub_routes"))
+            ->mergeBindings($subQuery->getQuery())
+            ->select('route_name', DB::raw('COUNT(*) as orders_count'), DB::raw('SUM(total) as sales_sum'))
+            ->groupBy('route_name')
+            ->orderByDesc('sales_sum')
+            ->get();
+
+        $routeBreakdown = $routeSummaryRaw->map(function($r) {
+            return [
+                'route' => $r->route_name ?? 'SIN RUTA',
+                'orders_count' => (int)$r->orders_count,
+                'sales_sum' => round((float)$r->sales_sum, 2),
+            ];
+        })->values()->toArray();
+
+        $orderSortCol = $dateType === 'delivery_date' ? 'orders.delivery_date' : 'orders.created_at';
+        $orders = (clone $query)
+            ->orderByDesc($orderSortCol)
+            ->orderByDesc('orders.id')
+            ->paginate(30)
+            ->withQueryString();
+
+        $sellers = User::orderBy('name')->get(['id', 'name']);
+        $availableRoutes = Branch::whereNotNull('route')
+            ->where('route', '!=', '')
+            ->distinct()
+            ->orderBy('route')
+            ->pluck('route')
+            ->values()
+            ->toArray();
+
+        return Inertia::render('Admin/Reports/OrdersRoutes', [
+            'orders' => $orders,
+            'summary' => [
+                'total_sales' => round($totalSales, 2),
+                'total_count' => $totalCount,
+                'invoiced_count' => $invoicedCount,
+                'invoiced_total' => round($invoicedTotal, 2),
+                'preinvoiced_count' => $preinvoicedCount,
+                'preinvoiced_total' => round($preinvoicedTotal, 2),
+                'pending_count' => $pendingCount,
+                'pending_total' => round($pendingTotal, 2),
+                'route_breakdown' => $routeBreakdown,
+            ],
+            'sellers' => $sellers,
+            'available_routes' => $availableRoutes,
+            'filters' => [
+                'date_type' => $dateType,
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'doc_type' => $docType,
+                'user_ids' => array_values($userIds),
+                'routes' => array_values($routes),
+                'payment_method' => $request->payment_method ?? '',
+                'status' => $request->status ?? '',
+                'search' => $request->search ?? '',
+            ],
+        ]);
+    }
+
+    public function exportOrdersRoutes(Request $request)
+    {
+        [$query, $from, $to, $dateType, $docType, $userIds, $routes] = $this->getOrdersRoutesBaseQuery($request);
+
+        $orderSortCol = $dateType === 'delivery_date' ? 'orders.delivery_date' : 'orders.created_at';
+        $orders = $query
+            ->orderByDesc($orderSortCol)
+            ->orderByDesc('orders.id')
+            ->get();
+
+        $csvHeader = [
+            "ID Pedido",
+            "Fecha Pedido",
+            "Fecha Entrega",
+            "Tipo Documento",
+            "Ruta",
+            "Cliente",
+            "RUC / Cedula",
+            "Sucursal",
+            "Vendedor",
+            "Metodo Pago",
+            "Dias Credito",
+            "Estado Pedido",
+            "Total ($)",
+        ];
+
+        $filename = "Reporte_Pedidos_Facturas_Rutas_" . date('Ymd_His') . ".csv";
+
+        return response()->stream(function () use ($csvHeader, $orders) {
+            $file = fopen('php://output', 'w');
+            fprintf($file, chr(0xEF).chr(0xBB).chr(0xBF));
+            fputcsv($file, $csvHeader);
+
+            foreach ($orders as $order) {
+                $docTypeLabel = 'PEDIDO';
+                if ($order->is_invoiced || $order->status === 'invoiced') {
+                    $docTypeLabel = 'FACTURA SRI';
+                } elseif ($order->is_preinvoiced) {
+                    $docTypeLabel = 'PREFACTURA';
+                }
+
+                $route = $order->computed_route ?? 'SIN RUTA';
+
+                fputcsv($file, [
+                    '#' . $order->id,
+                    $order->created_at ? $order->created_at->format('d/m/Y H:i') : 'N/A',
+                    $order->delivery_date ? Carbon::parse($order->delivery_date)->format('d/m/Y') : 'N/A',
+                    $docTypeLabel,
+                    $route,
+                    $order->client ? $order->client->name : 'N/A',
+                    $order->client ? ($order->client->identification ?? 'N/A') : 'N/A',
+                    $order->branch ? $order->branch->name : 'Principal / Matriz',
+                    $order->user ? $order->user->name : 'N/A',
+                    $order->payment_method ?? 'Efectivo',
+                    $order->credit_days ?? 0,
+                    $order->status,
+                    number_format((float)$order->total, 2, '.', ''),
+                ]);
+            }
+
+            fclose($file);
+        }, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+        ]);
+    }
+
+    protected function getOrdersRoutesBaseQuery(Request $request): array
+    {
+        $dateType = $request->input('date_type', 'created_at');
+        if (!in_array($dateType, ['created_at', 'delivery_date'])) {
+            $dateType = 'created_at';
+        }
+
+        $from = $request->from ? Carbon::parse($request->from) : Carbon::now()->startOfMonth();
+        $to = $request->to ? Carbon::parse($request->to) : Carbon::now();
+
+        $query = Order::query()
+            ->leftJoin('branches', 'branches.id', '=', 'orders.branch_id')
+            ->select('orders.*')
+            ->selectRaw("COALESCE(branches.route, (SELECT b.route FROM branches b WHERE b.client_id = orders.client_id AND b.route IS NOT NULL LIMIT 1), 'SIN RUTA') as computed_route")
+            ->with(['client', 'branch', 'user']);
+
+        // Filtro por rango de fecha
+        if ($dateType === 'delivery_date') {
+            $query->whereBetween('orders.delivery_date', [
+                $from->copy()->format('Y-m-d'),
+                $to->copy()->format('Y-m-d')
+            ]);
+        } else {
+            $query->whereBetween('orders.created_at', [
+                $from->copy()->startOfDay(),
+                $to->copy()->endOfDay()
+            ]);
+        }
+
+        // Filtro por tipo de documento (Factura / Prefactura / Pedido)
+        $docType = $request->input('doc_type', 'all');
+        if ($docType === 'invoiced') {
+            $query->where(function ($q) {
+                $q->where('orders.is_invoiced', true)
+                  ->orWhere('orders.status', 'invoiced');
+            });
+        } elseif ($docType === 'preinvoiced') {
+            $query->where('orders.is_preinvoiced', true);
+        } elseif ($docType === 'not_invoiced') {
+            $query->where('orders.is_invoiced', false)
+                  ->where('orders.is_preinvoiced', false)
+                  ->where('orders.status', '!=', 'invoiced');
+        }
+
+        // Filtro por Múltiples Vendedores
+        $userIds = $request->input('user_ids', []);
+        if (!empty($userIds)) {
+            if (is_string($userIds)) {
+                $userIds = explode(',', $userIds);
+            }
+            $userIds = array_values(array_filter(array_map('intval', (array)$userIds)));
+            if (!empty($userIds)) {
+                $query->whereIn('orders.user_id', $userIds);
+            }
+        }
+
+        // Filtro por Rutas (admite una o múltiples)
+        $routes = $request->input('routes', []);
+        if (!empty($routes)) {
+            if (is_string($routes)) {
+                $routes = explode(',', $routes);
+            }
+            $routes = array_values(array_filter(array_map('trim', (array)$routes)));
+            if (!empty($routes) && !in_array('all', $routes)) {
+                $hasNoRoute = in_array('none', $routes) || in_array('SIN RUTA', $routes);
+                $cleanRoutes = array_values(array_filter($routes, fn($r) => $r !== 'none' && $r !== 'SIN RUTA'));
+
+                $query->where(function ($q) use ($cleanRoutes, $hasNoRoute) {
+                    if (!empty($cleanRoutes)) {
+                        $q->whereIn(DB::raw("COALESCE(branches.route, (SELECT b.route FROM branches b WHERE b.client_id = orders.client_id AND b.route IS NOT NULL LIMIT 1))"), $cleanRoutes);
+                    }
+                    if ($hasNoRoute) {
+                        $orMethod = !empty($cleanRoutes) ? 'orWhereNull' : 'whereNull';
+                        $q->$orMethod(DB::raw("COALESCE(branches.route, (SELECT b.route FROM branches b WHERE b.client_id = orders.client_id AND b.route IS NOT NULL LIMIT 1))"));
+                    }
+                });
+            }
+        }
+
+        // Filtro por estado
+        if ($request->status) {
+            $query->where('orders.status', $request->status);
+        } else {
+            $query->where('orders.status', '!=', 'cancelled');
+        }
+
+        // Filtro por método de pago
+        if ($request->payment_method) {
+            $pm = strtolower($request->payment_method);
+            if ($pm === 'credito') {
+                $query->where(function ($q) {
+                    $q->where('orders.payment_method', 'LIKE', '%cred%')
+                      ->orWhere('orders.payment_method', 'LIKE', '%créd%');
+                });
+            } elseif ($pm === 'efectivo') {
+                $query->where(function ($q) {
+                    $q->where('orders.payment_method', 'LIKE', '%efec%')
+                      ->orWhereNull('orders.payment_method');
+                });
+            } else {
+                $query->where('orders.payment_method', 'LIKE', "%{$request->payment_method}%");
+            }
+        }
+
+        // Filtro por texto de búsqueda
+        if ($request->search) {
+            $s = trim($request->search);
+            $cleanId = ltrim(str_replace('#', '', $s), '0');
+            $query->where(function ($q) use ($s, $cleanId) {
+                if (is_numeric($cleanId)) {
+                    $q->orWhere('orders.id', (int)$cleanId);
+                }
+                $q->orWhereHas('client', function ($cq) use ($s) {
+                    $cq->where('name', 'LIKE', "%{$s}%")
+                       ->orWhere('nombre_local', 'LIKE', "%{$s}%")
+                       ->orWhere('identification', 'LIKE', "%{$s}%");
+                })->orWhereHas('branch', function ($bq) use ($s) {
+                    $bq->where('name', 'LIKE', "%{$s}%")
+                       ->orWhere('route', 'LIKE', "%{$s}%");
+                });
+            });
+        }
+
+        return [$query, $from, $to, $dateType, $docType, $userIds, $routes];
     }
 }
 

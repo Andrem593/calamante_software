@@ -28,6 +28,8 @@ class _CreateVisitScreenState extends State<CreateVisitScreen> {
   GoogleMapController? _mapController;
   bool _loadingLocation = false;
   bool _submitting = false;
+  bool _isQuickCensusing = false;
+  bool _hasQuickCensused = false;
 
   List<dynamic> _equipments = [];
   List<int> _selectedEquipmentIds = [];
@@ -379,8 +381,10 @@ class _CreateVisitScreenState extends State<CreateVisitScreen> {
         ),
       );
       // Esperar hasta que termine la carga
-      while (_loadingEquipments) {
+      int attempts = 0;
+      while (_loadingEquipments && attempts < 30) {
         await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
       }
       if (!mounted) return;
       Navigator.of(context).pop(); // cerrar diálogo de espera
@@ -835,6 +839,10 @@ class _CreateVisitScreenState extends State<CreateVisitScreen> {
               ),
             ],
 
+            if (_selectedClient != null) ...[
+              _buildQuickCensusWidget(),
+            ],
+
             const SizedBox(height: 40),
 
             // SUBMIT BUTTON
@@ -867,6 +875,147 @@ class _CreateVisitScreenState extends State<CreateVisitScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Future<void> _quickCensusCurrentLocation() async {
+    if (_selectedClient == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona un cliente primero.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (_currentPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Obteniendo tu posición GPS... Espera unos segundos.'), backgroundColor: Colors.orange),
+      );
+      await _getCurrentLocation();
+      if (!mounted || _currentPosition == null) return;
+    }
+
+    setState(() => _isQuickCensusing = true);
+
+    try {
+      final syncService = context.read<SyncService>();
+      final apiService = context.read<ApiService>();
+
+      final payload = {
+        'client_id': _selectedClient!.id,
+        if (_selectedBranch != null) 'branch_id': _selectedBranch!.id,
+        'latitude': _currentPosition!.latitude,
+        'longitude': _currentPosition!.longitude,
+      };
+
+      if (syncService.isOnline) {
+        await apiService.saveBranchCensus(payload, clientId: _selectedClient!.id);
+      } else {
+        await OfflineDatabaseService.instance.insertOfflineCensus(
+          payload,
+          clientId: _selectedClient!.id,
+          clientName: _selectedClient!.name,
+          branchId: _selectedBranch?.id,
+        );
+        syncService.checkPendingCounts();
+      }
+
+      setState(() {
+        _hasQuickCensused = true;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _selectedBranch != null
+                        ? '¡Ubicación de "${_selectedBranch!.name}" actualizada con tu GPS!'
+                        : '¡Ubicación de "${_selectedClient!.name}" actualizada con tu GPS!',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green[700],
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error en Quick Census: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al actualizar ubicación: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isQuickCensusing = false);
+    }
+  }
+
+  Widget _buildQuickCensusWidget() {
+    final bool isGeocoded = (_selectedBranch?.isGeocoded ?? false) || _hasQuickCensused;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isGeocoded ? const Color(0xFFE8F5E9) : const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isGeocoded ? const Color(0xFFA5D6A7) : const Color(0xFFFFE082),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isGeocoded ? Icons.check_circle_rounded : Icons.add_location_alt_rounded,
+            color: isGeocoded ? Colors.green[700] : Colors.orange[800],
+            size: 24,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isGeocoded ? 'Sucursal Georreferenciada' : '¿Estás en el local del cliente?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: isGeocoded ? Colors.green[900] : Colors.orange[900],
+                  ),
+                ),
+                Text(
+                  isGeocoded
+                      ? 'Las coordenadas ya están fijadas. Puedes re-fijarlas si estás en su puerta.'
+                      : 'Fija esta ubicación GPS actual como la oficial de la sucursal en 1 clic.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _isQuickCensusing ? null : _quickCensusCurrentLocation,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isGeocoded ? Colors.green[600] : const Color(0xFF03A9F4),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: _isQuickCensusing
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text(
+                    isGeocoded ? 'Actualizar GPS' : 'Fijar GPS',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+          ),
+        ],
       ),
     );
   }

@@ -47,6 +47,141 @@ class ReviewOrderScreen extends StatefulWidget {
 
 class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
   bool _submitting = false;
+  bool _isQuickCensusing = false;
+  bool _hasQuickCensused = false;
+
+  Future<void> _quickCensusCurrentLocation() async {
+    if (widget.position == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se dispone de coordenadas GPS del pedido.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _isQuickCensusing = true);
+
+    try {
+      final syncService = context.read<SyncService>();
+      final apiService = context.read<ApiService>();
+
+      final payload = {
+        'client_id': widget.client.id,
+        if (widget.branch != null) 'branch_id': widget.branch!.id,
+        'latitude': widget.position!.latitude,
+        'longitude': widget.position!.longitude,
+      };
+
+      if (syncService.isOnline) {
+        await apiService.saveBranchCensus(payload, clientId: widget.client.id);
+      } else {
+        await OfflineDatabaseService.instance.insertOfflineCensus(
+          payload,
+          clientId: widget.client.id,
+          clientName: widget.client.name,
+          branchId: widget.branch?.id,
+        );
+        syncService.checkPendingCounts();
+      }
+
+      setState(() {
+        _hasQuickCensused = true;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.branch != null
+                        ? '¡Ubicación de "${widget.branch!.name}" actualizada con tu GPS!'
+                        : '¡Ubicación del cliente actualizada con tu GPS!',
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.green[700],
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error en Quick Census: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al actualizar ubicación: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isQuickCensusing = false);
+    }
+  }
+
+  Widget _buildQuickCensusWidget() {
+    final bool isGeocoded = (widget.branch?.isGeocoded ?? false) || _hasQuickCensused;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isGeocoded ? const Color(0xFFE8F5E9) : const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isGeocoded ? const Color(0xFFA5D6A7) : const Color(0xFFFFE082),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isGeocoded ? Icons.check_circle_rounded : Icons.add_location_alt_rounded,
+            color: isGeocoded ? Colors.green[700] : Colors.orange[800],
+            size: 24,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isGeocoded ? 'Cliente / Sucursal Georreferenciada' : '¿Estás en el local del cliente?',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: isGeocoded ? Colors.green[900] : Colors.orange[900],
+                  ),
+                ),
+                Text(
+                  isGeocoded
+                      ? 'Las coordenadas ya están fijadas. Puedes re-fijarlas si estás en su puerta.'
+                      : 'Fija esta ubicación GPS actual como la oficial del cliente con 1 clic.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: _isQuickCensusing ? null : _quickCensusCurrentLocation,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isGeocoded ? Colors.green[600] : const Color(0xFF03A9F4),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: _isQuickCensusing
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : Text(
+                    isGeocoded ? 'Actualizar GPS' : 'Fijar GPS',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 
   double get subtotal => widget.items.fold(0, (sum, item) {
         final double price = double.parse(item['price'].toString());
@@ -136,8 +271,10 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
           ),
         ),
       );
-      while (_loadingEquipments) {
+      int attempts = 0;
+      while (_loadingEquipments && attempts < 30) {
         await Future.delayed(const Duration(milliseconds: 100));
+        attempts++;
       }
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -317,9 +454,11 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
         'requested_by_id': _requestedByIdCtrl.text,
         'signature': signatureBase64,
         'delivery_date': widget.deliveryDate?.toIso8601String().split('T')[0],
+        'created_at': DateTime.now().toIso8601String(),
       };
 
       final syncService = context.read<SyncService>();
+      final apiService = context.read<ApiService>();
       final isOnline = syncService.isOnline;
 
       if (!isOnline) {
@@ -337,7 +476,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
             .pushNamedAndRemoveUntil('/dashboard', (route) => false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('📱 Guardado localmente (Sin conexión). Se auto-sincronizará al conectarte.'),
+            content: Text('📱 Guardado localmente (Sin conexión). Puedes sincronizarlo individualmente desde el Historial.'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 5),
           ),
@@ -346,9 +485,9 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
       }
 
       try {
-        await context.read<ApiService>().post('/orders', payload);
+        await apiService.post('/orders', payload);
 
-        await context.read<ApiService>().syncClientEquipments(
+        await apiService.syncClientEquipments(
             widget.client.id, _selectedEquipmentIds,
             branchId: widget.branch?.id);
 
@@ -378,7 +517,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
             .pushNamedAndRemoveUntil('/dashboard', (route) => false);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('📱 Falló la conexión. El pedido fue guardado localmente para auto-sincronización.'),
+            content: Text('📱 Falló la conexión. El pedido fue guardado localmente; puedes sincronizarlo individualmente desde el Historial.'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 5),
           ),
@@ -508,12 +647,17 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                     const Text('Detalles del Pedido',
                         style: TextStyle(
                             fontSize: 18, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 15),
                     _buildSummaryRow(
                         'Subtotal', '\$${subtotal.toStringAsFixed(2)}'),
                     _buildSummaryRow('IVA', '\$${taxes.toStringAsFixed(2)}'),
                     _buildSummaryRow('Total', '\$${total.toStringAsFixed(2)}',
                         isTotal: true),
+                    const SizedBox(height: 6),
+                    _buildSummaryRow(
+                        'Condición de Pago',
+                        widget.paymentMethod == 'Crédito'
+                            ? 'Crédito (${widget.creditDays ?? 30} días)'
+                            : (widget.paymentMethod ?? 'Efectivo (Contado)')),
                     const Divider(height: 40),
                     const Text('Ubicación de Entrega',
                         style: TextStyle(
@@ -546,6 +690,7 @@ class _ReviewOrderScreenState extends State<ReviewOrderScreen> {
                         ),
                       ),
                     ),
+                    _buildQuickCensusWidget(),
                     const SizedBox(height: 25),
                     const Text('Información del Cliente',
                         style: TextStyle(

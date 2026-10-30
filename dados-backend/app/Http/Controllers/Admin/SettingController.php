@@ -15,6 +15,7 @@ class SettingController extends Controller
             'settings' => [
                 'CONTIFICO_API_KEY' => Setting::get('CONTIFICO_API_KEY'),
                 'CONTIFICO_API_TOKEN' => Setting::get('CONTIFICO_API_TOKEN'),
+                'CONTIFICO_SYNC_INTERVAL' => Setting::get('CONTIFICO_SYNC_INTERVAL', '12'),
                 'GOOGLE_MAPS_API_KEY' => Setting::get('GOOGLE_MAPS_API_KEY') ?: env('GOOGLE_MAPS_API_KEY'),
                 'LATEST_APP_VERSION' => Setting::get('LATEST_APP_VERSION', '1.0.4'),
                 'MIN_REQUIRED_APP_VERSION' => Setting::get('MIN_REQUIRED_APP_VERSION', '1.0.4'),
@@ -28,6 +29,7 @@ class SettingController extends Controller
         $request->validate([
             'CONTIFICO_API_KEY' => 'nullable|string',
             'CONTIFICO_API_TOKEN' => 'nullable|string',
+            'CONTIFICO_SYNC_INTERVAL' => 'nullable|string|in:1,12,24',
             'GOOGLE_MAPS_API_KEY' => 'nullable|string',
             'LATEST_APP_VERSION' => 'nullable|string',
             'MIN_REQUIRED_APP_VERSION' => 'nullable|string',
@@ -35,7 +37,7 @@ class SettingController extends Controller
             'apk_file' => 'nullable|file|max:102400', // Max 100MB
         ]);
 
-        foreach ($request->only(['CONTIFICO_API_KEY', 'CONTIFICO_API_TOKEN', 'GOOGLE_MAPS_API_KEY', 'LATEST_APP_VERSION', 'MIN_REQUIRED_APP_VERSION', 'APP_APK_URL']) as $key => $value) {
+        foreach ($request->only(['CONTIFICO_API_KEY', 'CONTIFICO_API_TOKEN', 'CONTIFICO_SYNC_INTERVAL', 'GOOGLE_MAPS_API_KEY', 'LATEST_APP_VERSION', 'MIN_REQUIRED_APP_VERSION', 'APP_APK_URL']) as $key => $value) {
             Setting::set($key, $value);
         }
 

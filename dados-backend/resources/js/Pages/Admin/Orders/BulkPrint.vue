@@ -210,19 +210,26 @@ function formatDate(date) {
 
 <style scoped>
 @media print {
+    @page {
+        margin: 10mm;
+    }
+
     .no-print {
         display: none !important;
     }
     
     body {
         background-color: white !important;
+        margin: 0 !important;
+        padding: 0 !important;
     }
 
     .page-card {
         box-shadow: none !important;
         border: none !important;
         border-radius: 0 !important;
-        margin-bottom: 0 !important;
+        margin: 0 auto !important;
+        max-width: 100% !important;
     }
 
     .page-break {

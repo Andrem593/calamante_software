@@ -43,6 +43,22 @@
 
                         <div class="space-y-2">
                             <label class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                                Frecuencia de Sincronización / Verificación con Contifico
+                                <span class="text-xs font-normal text-slate-400">(Evita saturar el sistema)</span>
+                            </label>
+                            <select v-model="form.CONTIFICO_SYNC_INTERVAL"
+                                class="w-full px-4 py-3 rounded-xl border-slate-200 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-500/10 transition-all text-slate-600 bg-slate-50/50">
+                                <option value="1">Cada 1 Hora</option>
+                                <option value="12">Cada 12 Horas (Recomendado)</option>
+                                <option value="24">Cada 24 Horas</option>
+                            </select>
+                            <p class="text-xs text-slate-500">
+                                Controla la frecuencia de verificación del estado de facturas vencidas para no saturar las consultas externas a Contifico.
+                            </p>
+                        </div>
+
+                        <div class="space-y-2">
+                            <label class="text-sm font-semibold text-slate-700 flex items-center gap-2">
                                 Google Maps API Key
                                 <span class="text-xs font-normal text-slate-400">(Requerido para Reverse Geocoding: Sector y Parroquia)</span>
                             </label>
@@ -147,6 +163,7 @@ const apkFileInput = ref(null);
 const form = useForm({
     CONTIFICO_API_KEY: props.settings.CONTIFICO_API_KEY || '',
     CONTIFICO_API_TOKEN: props.settings.CONTIFICO_API_TOKEN || '',
+    CONTIFICO_SYNC_INTERVAL: String(props.settings.CONTIFICO_SYNC_INTERVAL || '12'),
     GOOGLE_MAPS_API_KEY: props.settings.GOOGLE_MAPS_API_KEY || '',
     LATEST_APP_VERSION: props.settings.LATEST_APP_VERSION || '',
     MIN_REQUIRED_APP_VERSION: props.settings.MIN_REQUIRED_APP_VERSION || '',

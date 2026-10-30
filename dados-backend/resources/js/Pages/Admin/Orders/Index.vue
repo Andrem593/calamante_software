@@ -88,9 +88,14 @@
                         <td class="px-6 py-3.5 text-sm text-slate-500">{{ order.delivery_date ? new Date(order.delivery_date).toLocaleDateString('es-EC') : '—' }}</td>
                         <!-- Contifico status -->
                         <td class="px-6 py-3.5">
-                            <span v-if="order.is_preinvoiced || order.contifico_id"
+                            <span v-if="order.contifico_id"
                                 class="inline-flex items-center px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-100">
                                 Sincronizado
+                            </span>
+                            <span v-else-if="isOlderDate(order.created_at)"
+                                class="inline-flex items-center px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-xs font-semibold border border-amber-200"
+                                title="Pedido con fecha anterior. Requiere autorización manual para enviarse a Contifico.">
+                                Pendiente Autorización
                             </span>
                             <span v-else
                                 class="inline-flex items-center px-2 py-0.5 rounded bg-rose-50 text-rose-700 text-xs font-semibold border border-rose-100">
@@ -161,6 +166,13 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     Confirmar Entrega
+                </button>
+                <button type="button" @click="bulkSyncContifico" :disabled="bulkSyncing"
+                    class="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-sm font-semibold transition">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.23" />
+                    </svg>
+                    {{ bulkSyncing ? 'Autorizando...' : 'Autorizar en Contifico' }}
                 </button>
                 <button type="button" @click="bulkPrint"
                     class="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm font-semibold transition border border-slate-700">
@@ -247,5 +259,30 @@ function bulkDeliver() {
 function bulkPrint() {
     const ids = selectedOrderIds.value.join(',');
     window.open(route('admin.orders.bulk-print') + `?ids=${ids}`, '_blank');
+}
+
+const bulkSyncing = ref(false);
+
+function isOlderDate(dateStr) {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return d < today;
+}
+
+function bulkSyncContifico() {
+    if (confirm(`¿Desea autorizar y enviar a Contifico los ${selectedOrderIds.value.length} pedidos seleccionados?`)) {
+        bulkSyncing.value = true;
+        router.post(route('admin.orders.bulk-sync-contifico'), {
+            order_ids: selectedOrderIds.value
+        }, {
+            preserveScroll: true,
+            onFinish: () => {
+                bulkSyncing.value = false;
+                selectedOrderIds.value = [];
+            }
+        });
+    }
 }
 </script>

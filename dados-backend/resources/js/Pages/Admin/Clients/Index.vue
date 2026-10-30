@@ -130,15 +130,31 @@
                             <span v-else class="text-slate-400">—</span>
                         </td>
                         <td class="px-6 py-3.5">
-                            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
-                                :class="client.is_active !== false ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'">
-                                <span class="w-1.5 h-1.5 rounded-full" :class="client.is_active !== false ? 'bg-emerald-500' : 'bg-red-500'"></span>
-                                {{ client.is_active !== false ? 'ACTIVO' : 'INACTIVO' }}
-                            </span>
+                            <div class="flex flex-col gap-1 items-start">
+                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+                                    :class="client.is_active !== false ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'">
+                                    <span class="w-1.5 h-1.5 rounded-full" :class="client.is_active !== false ? 'bg-emerald-500' : 'bg-red-500'"></span>
+                                    {{ client.is_active !== false ? 'ACTIVO' : 'INACTIVO' }}
+                                </span>
+                                <span v-if="client.unblock_time_remaining" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[11px] font-medium border border-amber-200" :title="'Desbloqueado temporalmente até ' + client.unblocked_until">
+                                    🔓 Desbloqueado ({{ client.unblock_time_remaining }})
+                                </span>
+                                <span v-else-if="client.is_blocked || client.is_blocked_for_sales" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-100 text-red-800 text-[11px] font-bold border border-red-200">
+                                    🔒 BLOQUEADO POR VENTAS
+                                </span>
+                            </div>
                         </td>
                         <td class="px-6 py-3.5 text-sm text-slate-500">{{ client.email ?? '—' }}</td>
                         <td class="px-6 py-3.5 text-right">
                             <div class="flex items-center justify-end gap-1">
+                                <button @click="openUnblockModal(client)"
+                                    class="p-2 text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition"
+                                    title="Gestión de Bloqueo / Desbloqueo por Días">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                            d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                                    </svg>
+                                </button>
                                 <Link :href="route('admin.clients.edit', client.id)"
                                     class="p-2 text-slate-400 hover:text-cyan-500 hover:bg-cyan-50 rounded-lg transition"
                                     title="Editar">
@@ -266,6 +282,101 @@
                                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                         </svg>
                         Fusionar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Unblock Modal -->
+        <div v-if="showUnblockModal"
+            class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-slate-800">Desbloqueo de Cliente</h3>
+                    <button @click="showUnblockModal = false" class="text-slate-400 hover:text-slate-600">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <div v-if="selectedClientUnblock" class="mb-4">
+                    <p class="text-sm text-slate-800 font-bold">{{ selectedClientUnblock.name }}</p>
+                    <p class="text-xs text-slate-500">RUC/Cédula: {{ selectedClientUnblock.identification ?? 'N/A' }}</p>
+                    <div class="mt-2 text-xs p-2.5 rounded-xl border" :class="selectedClientUnblock.unblock_time_remaining ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-slate-50 border-slate-200 text-slate-700'">
+                        <span v-if="selectedClientUnblock.unblock_time_remaining">
+                            🔓 Desbloqueado activo hasta: <strong>{{ selectedClientUnblock.unblock_time_remaining }}</strong>
+                        </span>
+                        <span v-else-if="selectedClientUnblock.is_blocked || selectedClientUnblock.is_blocked_for_sales">
+                            🔒 Estado actual: <strong>BLOQUEADO POR VENTAS</strong>
+                        </span>
+                        <span v-else>
+                            ✅ Estado actual: <strong>ACTIVO / AL DÍA</strong>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="mb-5">
+                    <label class="block text-xs font-semibold text-slate-600 uppercase mb-2">Seleccionar Días de Desbloqueo</label>
+                    <div class="grid grid-cols-4 gap-2 mb-3">
+                        <button type="button" @click="unblockDays = 1"
+                            class="py-2 text-xs font-bold rounded-xl border transition"
+                            :class="unblockDays === 1 ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'">
+                            1 Día
+                        </button>
+                        <button type="button" @click="unblockDays = 2"
+                            class="py-2 text-xs font-bold rounded-xl border transition"
+                            :class="unblockDays === 2 ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'">
+                            2 Días
+                        </button>
+                        <button type="button" @click="unblockDays = 3"
+                            class="py-2 text-xs font-bold rounded-xl border transition"
+                            :class="unblockDays === 3 ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'">
+                            3 Días
+                        </button>
+                        <button type="button" @click="unblockDays = 7"
+                            class="py-2 text-xs font-bold rounded-xl border transition"
+                            :class="unblockDays === 7 ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'">
+                            7 Días
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs text-slate-500 font-medium">Días personalizados:</span>
+                        <input type="number" min="1" max="365" v-model.number="unblockDays"
+                            class="w-24 px-3 py-1.5 border border-slate-200 rounded-xl text-sm font-bold text-center focus:ring-2 focus:ring-amber-400 focus:outline-none" />
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-medium text-slate-500 mb-1">Motivo / Observación (Opcional):</label>
+                        <input type="text" v-model="unblockReason" placeholder="Ej. Solicitud de gerencia / Compromiso de pago"
+                            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none" />
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-2">
+                    <button type="button" @click="submitUnblock" :disabled="submittingUnblock || unblockDays < 1"
+                        class="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-xl transition shadow-md shadow-amber-200 disabled:opacity-50 flex items-center justify-center gap-2">
+                        <svg v-if="submittingUnblock" class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Otorgar Desbloqueo por {{ unblockDays }} día(s)
+                    </button>
+
+                    <div class="flex gap-2 mt-1">
+                        <button type="button" @click="toggleManualBlock(true)"
+                            class="flex-1 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold rounded-xl border border-red-200 transition">
+                            🔒 Bloquear Manualmente
+                        </button>
+                        <button type="button" @click="toggleManualBlock(false)"
+                            class="flex-1 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold rounded-xl border border-emerald-200 transition">
+                            ✅ Quitar Bloqueo Manual
+                        </button>
+                    </div>
+
+                    <button type="button" @click="showUnblockModal = false"
+                        class="w-full py-2 text-slate-500 hover:text-slate-700 text-xs font-medium transition mt-1">
+                        Cerrar
                     </button>
                 </div>
             </div>
@@ -406,4 +517,51 @@ function submitMerge() {
         }
     });
 }
+
+// Unblock feature
+const showUnblockModal = ref(false);
+const selectedClientUnblock = ref(null);
+const unblockDays = ref(1);
+const unblockReason = ref('');
+const submittingUnblock = ref(false);
+
+function openUnblockModal(client) {
+    selectedClientUnblock.value = client;
+    unblockDays.value = 1;
+    unblockReason.value = '';
+    showUnblockModal.value = true;
+}
+
+function submitUnblock() {
+    if (!selectedClientUnblock.value || unblockDays.value < 1) return;
+    submittingUnblock.value = true;
+
+    router.post(route('admin.clients.unblock', selectedClientUnblock.value.id), {
+        days: unblockDays.value,
+        reason: unblockReason.value
+    }, {
+        onSuccess: () => {
+            showUnblockModal.value = false;
+        },
+        onFinish: () => {
+            submittingUnblock.value = false;
+        }
+    });
+}
+
+function toggleManualBlock(isBlocked) {
+    if (!selectedClientUnblock.value) return;
+    const actionText = isBlocked ? 'bloquear' : 'quitar el bloqueo manual a';
+    if (!confirm(`¿Estás seguro de ${actionText} ${selectedClientUnblock.value.name}?`)) return;
+
+    router.post(route('admin.clients.block', selectedClientUnblock.value.id), {
+        is_blocked: isBlocked,
+        reason: unblockReason.value
+    }, {
+        onSuccess: () => {
+            showUnblockModal.value = false;
+        }
+    });
+}
 </script>
+

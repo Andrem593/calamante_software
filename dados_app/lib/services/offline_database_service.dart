@@ -21,8 +21,9 @@ class OfflineDatabaseService {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _createDB,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -49,8 +50,15 @@ class OfflineDatabaseService {
         client_id INTEGER,
         name TEXT,
         code TEXT,
+        brand_name TEXT,
         address TEXT,
-        email TEXT
+        phone TEXT,
+        email TEXT,
+        sector TEXT,
+        parroquia TEXT,
+        latitude REAL,
+        longitude REAL,
+        geocoded_at TEXT
       )
     ''');
 
@@ -114,6 +122,57 @@ class OfflineDatabaseService {
         sync_error TEXT
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE offline_censuses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER,
+        client_name TEXT,
+        branch_id INTEGER,
+        payload_json TEXT,
+        created_at TEXT,
+        is_synced INTEGER DEFAULT 0,
+        sync_error TEXT
+      )
+    ''');
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS offline_censuses (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          client_id INTEGER,
+          client_name TEXT,
+          branch_id INTEGER,
+          payload_json TEXT,
+          created_at TEXT,
+          is_synced INTEGER DEFAULT 0,
+          sync_error TEXT
+        )
+      ''');
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN brand_name TEXT');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN phone TEXT');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN sector TEXT');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN parroquia TEXT');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN latitude REAL');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN longitude REAL');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE cached_branches ADD COLUMN geocoded_at TEXT');
+      } catch (_) {}
+    }
   }
 
   // ── CLIENTES ─────────────────────────────────────────────────────────────────
@@ -176,8 +235,15 @@ class OfflineDatabaseService {
           'client_id': clientId,
           'name': b.name,
           'code': b.code,
+          'brand_name': b.brandName,
           'address': b.address,
+          'phone': b.phone,
           'email': b.email,
+          'sector': b.sector,
+          'parroquia': b.parroquia,
+          'latitude': b.latitude,
+          'longitude': b.longitude,
+          'geocoded_at': b.geocodedAt?.toIso8601String(),
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -273,9 +339,11 @@ class OfflineDatabaseService {
     required int clientId,
     required String clientName,
     required double total,
+    String? createdAt,
   }) async {
     final db = await instance.database;
-    final String nowStr = DateTime.now().toIso8601String();
+    final String nowStr = createdAt ?? payload['created_at'] ?? DateTime.now().toIso8601String();
+    payload['created_at'] = nowStr;
     return await db.insert('offline_orders', {
       'local_uuid': 'OFFLINE_${DateTime.now().millisecondsSinceEpoch}',
       'client_id': clientId,
@@ -286,6 +354,17 @@ class OfflineDatabaseService {
       'is_synced': 0,
       'sync_error': null,
     });
+  }
+
+  Future<Map<String, dynamic>?> getOfflineOrderById(int localId) async {
+    final db = await instance.database;
+    final results = await db.query(
+      'offline_orders',
+      where: 'id = ?',
+      whereArgs: [localId],
+      limit: 1,
+    );
+    return results.isNotEmpty ? results.first : null;
   }
 
   Future<List<Map<String, dynamic>>> getUnsyncedOrders() async {
@@ -312,6 +391,15 @@ class OfflineDatabaseService {
       {'is_synced': 1, 'sync_error': null},
       where: 'id = ?',
       whereArgs: [localId],
+    );
+  }
+
+  Future<void> markAllOrdersSynced() async {
+    final db = await instance.database;
+    await db.update(
+      'offline_orders',
+      {'is_synced': 1, 'sync_error': null},
+      where: 'is_synced = 0',
     );
   }
 
@@ -357,6 +445,63 @@ class OfflineDatabaseService {
     await db.update(
       'offline_visits',
       {'is_synced': 1, 'sync_error': null},
+      where: 'id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  // ── CENSOS EN COLA OFFLINE ──────────────────────────────────────────────
+  Future<int> insertOfflineCensus(
+    Map<String, dynamic> payload, {
+    required int clientId,
+    required String clientName,
+    int? branchId,
+  }) async {
+    final db = await instance.database;
+    final String nowStr = DateTime.now().toIso8601String();
+    return await db.insert('offline_censuses', {
+      'client_id': clientId,
+      'client_name': clientName,
+      'branch_id': branchId,
+      'payload_json': jsonEncode(payload),
+      'created_at': nowStr,
+      'is_synced': 0,
+      'sync_error': null,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getUnsyncedCensuses() async {
+    final db = await instance.database;
+    return await db.query(
+      'offline_censuses',
+      where: 'is_synced = 0',
+      orderBy: 'id ASC',
+    );
+  }
+
+  Future<int> getUnsyncedCensusesCount() async {
+    final db = await instance.database;
+    final count = Sqflite.firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM offline_censuses WHERE is_synced = 0'),
+    );
+    return count ?? 0;
+  }
+
+  Future<void> markCensusSynced(int localId) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_censuses',
+      {'is_synced': 1, 'sync_error': null},
+      where: 'id = ?',
+      whereArgs: [localId],
+    );
+  }
+
+  Future<void> updateCensusSyncError(int localId, String error) async {
+    final db = await instance.database;
+    await db.update(
+      'offline_censuses',
+      {'sync_error': error},
       where: 'id = ?',
       whereArgs: [localId],
     );

@@ -58,12 +58,29 @@ class DashboardController extends Controller
             }], 'total')
             ->orderByDesc('total_orders')
             ->take(5)
-            ->get()
-            ->map(function ($seller) use ($from, $to) {
-                $orders = Order::where('user_id', $seller->id)
-                    ->whereBetween('created_at', [$from, $to])
-                    ->where('status', '!=', 'cancelled')
-                    ->get();
+            ->get();
+
+        $sellerIds = $topSellers->pluck('id');
+
+        if ($sellerIds->isNotEmpty()) {
+            $allSellerOrders = Order::whereIn('user_id', $sellerIds)
+                ->whereBetween('created_at', [$from, $to])
+                ->where('status', '!=', 'cancelled')
+                ->get()
+                ->groupBy('user_id');
+
+            $allOrderIds = $allSellerOrders->flatten()->pluck('id');
+
+            $allProductBreakdowns = \App\Models\OrderItem::with('product')
+                ->whereIn('order_id', $allOrderIds)
+                ->join('orders', 'order_items.order_id', '=', 'orders.id')
+                ->selectRaw('orders.user_id, order_items.product_id, SUM(order_items.quantity) as quantity, SUM(order_items.subtotal) as total')
+                ->groupBy('orders.user_id', 'order_items.product_id')
+                ->get()
+                ->groupBy('user_id');
+
+            $topSellers->transform(function ($seller) use ($allSellerOrders, $allProductBreakdowns) {
+                $orders = $allSellerOrders->get($seller->id, collect());
 
                 $creditSales = $orders->filter(function ($order) {
                     $methodLower = strtolower($order->payment_method ?? '');
@@ -73,20 +90,15 @@ class DashboardController extends Controller
                 $totalSales = $orders->sum('total');
                 $cashSales = $totalSales - $creditSales;
 
-                $orderIds = $orders->pluck('id');
-                $productBreakdown = \App\Models\OrderItem::with('product')
-                    ->whereIn('order_id', $orderIds)
-                    ->selectRaw('product_id, SUM(quantity) as quantity, SUM(subtotal) as total')
-                    ->groupBy('product_id')
-                    ->get()
-                    ->map(function ($item) {
-                        return [
-                            'product_name' => $item->product ? $item->product->name : 'Producto Eliminado',
-                            'product_sku' => $item->product ? $item->product->sku : 'N/A',
-                            'quantity' => (int)$item->quantity,
-                            'total' => (float)$item->total,
-                        ];
-                    });
+                $breakdownItems = $allProductBreakdowns->get($seller->id, collect());
+                $productBreakdown = $breakdownItems->map(function ($item) {
+                    return [
+                        'product_name' => $item->product ? $item->product->name : 'Producto Eliminado',
+                        'product_sku' => $item->product ? $item->product->sku : 'N/A',
+                        'quantity' => (int)$item->quantity,
+                        'total' => (float)$item->total,
+                    ];
+                });
 
                 $seller->today_cash_sales = $cashSales;
                 $seller->today_credit_sales = $creditSales;
@@ -94,6 +106,7 @@ class DashboardController extends Controller
 
                 return $seller;
             });
+        }
 
         return Inertia::render('Admin/Dashboard', [
             'stats' => [

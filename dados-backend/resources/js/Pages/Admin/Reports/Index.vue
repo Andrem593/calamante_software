@@ -60,6 +60,27 @@
                 </svg>
             </Link>
 
+            <Link :href="route('admin.reports.orders-routes')"
+                class="flex items-center gap-4 p-5 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-violet-200 transition group">
+                <div
+                    class="w-12 h-12 rounded-xl bg-violet-50 flex items-center justify-center group-hover:bg-violet-100 transition">
+                    <svg class="w-6 h-6 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 17a2 2 0 11-4 0 2 2 0 014 0zM19 17a2 2 0 11-4 0 2 2 0 014 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 16V6a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h1m8-1a1 1 0 01-1 1H9m4-1V8a1 1 0 011-1h2.586a1 1 0 01.707.293l3.414 3.414a1 1 0 01.293.707V16a1 1 0 01-1 1h-1m-6-1a1 1 0 001 1h2" />
+                    </svg>
+                </div>
+                <div>
+                    <p class="font-semibold text-slate-800">Pedidos y Facturas por Ruta</p>
+                    <p class="text-slate-400 text-sm">Filtro por fechas, rutas y vendedores</p>
+                </div>
+                <svg class="w-5 h-5 text-slate-300 ml-auto group-hover:text-violet-500 transition" fill="none"
+                    stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </Link>
+
             <Link :href="route('admin.reports.presale-direct-sale')"
                 class="flex items-center gap-4 p-5 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-200 transition group">
                 <div
@@ -114,6 +135,25 @@
                     <p class="text-slate-400 text-sm">Sector y Parroquia (Google)</p>
                 </div>
                 <svg class="w-5 h-5 text-slate-300 ml-auto group-hover:text-cyan-500 transition" fill="none"
+                    stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </Link>
+
+            <Link :href="route('admin.reports.route-map')"
+                class="flex items-center gap-4 p-5 bg-white rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-emerald-200 transition group">
+                <div
+                    class="w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center group-hover:bg-emerald-100 transition">
+                    <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4" />
+                    </svg>
+                </div>
+                <div>
+                    <p class="font-semibold text-slate-800">Mapa Sectorizado por Rutas</p>
+                    <p class="text-slate-400 text-sm">Puntos de clientes y desglose de ventas</p>
+                </div>
+                <svg class="w-5 h-5 text-slate-300 ml-auto group-hover:text-emerald-500 transition" fill="none"
                     stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                 </svg>

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_service.dart';
-import '../services/sync_service.dart';
 import 'history_screen.dart';
 import 'profile_screen.dart';
 import 'visits_screen.dart';
@@ -36,6 +35,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
     } catch (e) {
       debugPrint('Dashboard Error: $e');
+      if (mounted && _stats == null) {
+        setState(() {
+          _stats = {
+            'pending_orders': 0,
+            'month_orders': 0,
+            'month_sales': 0,
+            'today_deliveries': 0,
+            'recent_orders': [],
+          };
+        });
+      }
     }
   }
 
@@ -43,7 +53,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return _stats == null
         ? const Center(child: CircularProgressIndicator())
         : SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.only(left: 16.0, right: 16.0, top: 16.0, bottom: 90.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -90,6 +100,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 12),
                 _buildTodayDeliveriesCard(),
+                const SizedBox(height: 20),
+                _buildCensusCard(),
                 const SizedBox(height: 32),
                 const Text('Últimos Pedidos',
                     style:
@@ -97,7 +109,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 16),
                 ...((_stats?['recent_orders'] as List?) ?? []).map((order) {
                   return _buildOrderTile(order);
-                }).toList(),
+                }),
               ],
             ),
           );
@@ -303,6 +315,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildCensusCard() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1FBFE),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFB3E5FC)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF03A9F4).withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.add_location_alt_rounded, color: Color(0xFF0288D1), size: 28),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Censo de Sucursales',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF01579B)),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Mapea y registra la ubicación exacta de tus clientes.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/census');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF03A9F4),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              ),
+              child: const Text('Censar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildOrderTile(dynamic order) {
     String status = order['status'] ?? 'pending';
     Color statusColor = Colors.orange;
@@ -362,73 +430,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSyncBanner() {
-    return Consumer<SyncService>(
-      builder: (context, sync, _) {
-        if (sync.isOnline && sync.pendingOrdersCount == 0 && !sync.isSyncing) {
-          return const SizedBox.shrink();
-        }
-
-        final bool isOffline = !sync.isOnline;
-        final int pendingCount = sync.pendingOrdersCount;
-
-        Color bg = isOffline ? Colors.orange.shade800 : Colors.blue.shade800;
-        IconData icon = isOffline ? Icons.wifi_off_rounded : Icons.sync_rounded;
-        String text = '';
-
-        if (isOffline) {
-          text = 'Modo Sin Conexión';
-          if (pendingCount > 0) {
-            text += ' ($pendingCount pedido(s) por sincronizar)';
-          }
-        } else if (sync.isSyncing) {
-          text = 'Sincronizando pedidos en segundo plano...';
-        } else if (pendingCount > 0) {
-          text = '$pendingCount pedido(s) pendientes de sincronización';
-        }
-
-        return Container(
-          width: double.infinity,
-          color: bg,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Row(
-            children: [
-              Icon(icon, color: Colors.white, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  text,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold),
-                ),
-              ),
-              if (sync.isOnline && pendingCount > 0 && !sync.isSyncing)
-                InkWell(
-                  onTap: () {
-                    final api = context.read<ApiService>();
-                    sync.syncPendingData(api);
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      'Sincronizar',
-                      style: TextStyle(
-                          color: Colors.blue,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
+    return const SizedBox.shrink();
   }
 }

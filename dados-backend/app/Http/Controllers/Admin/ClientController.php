@@ -25,8 +25,14 @@ class ClientController extends Controller
             });
         }
 
+        $clients = $query->latest()->paginate(15)->withQueryString();
+        $clients->getCollection()->transform(function ($client) {
+            $client->append('is_blocked_for_sales');
+            return $client;
+        });
+
         return Inertia::render('Admin/Clients/Index', [
-            'clients' => $query->latest()->paginate(15)->withQueryString(),
+            'clients' => $clients,
             'filters' => $request->only('search'),
         ]);
     }
@@ -168,4 +174,42 @@ class ClientController extends Controller
 
         return redirect()->route('admin.clients.index')->with('success', 'Clientes fusionados exitosamente.');
     }
+
+    public function unblock(Request $request, Client $client)
+    {
+        $request->validate([
+            'days' => 'required|integer|min:1',
+            'reason' => 'nullable|string|max:255',
+        ]);
+
+        $days = (int)$request->days;
+        $unblockedUntil = \Carbon\Carbon::now()->addDays($days)->endOfDay();
+
+        $client->update([
+            'unblocked_until' => $unblockedUntil,
+            'block_reason' => $request->reason ?? "Desbloqueado temporalmente por {$days} día(s) por el administrador.",
+        ]);
+
+        return redirect()->back()->with('success', "Cliente '{$client->name}' desbloqueado temporalmente por {$days} día(s) (hasta {$unblockedUntil->format('d/m/Y H:i')}).");
+    }
+
+    public function toggleBlock(Request $request, Client $client)
+    {
+        $request->validate([
+            'is_blocked' => 'required|boolean',
+            'reason' => 'nullable|string|max:255',
+        ]);
+
+        $isBlocked = $request->boolean('is_blocked');
+
+        $client->update([
+            'is_blocked' => $isBlocked,
+            'unblocked_until' => $isBlocked ? null : $client->unblocked_until,
+            'block_reason' => $request->reason ?? ($isBlocked ? 'Bloqueado manualmente por el administrador' : 'Desbloqueado manualmente por el administrador'),
+        ]);
+
+        $statusText = $isBlocked ? 'bloqueado' : 'desbloqueado';
+        return redirect()->back()->with('success', "El cliente '{$client->name}' ha sido {$statusText}.");
+    }
 }
+

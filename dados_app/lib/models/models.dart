@@ -1,20 +1,70 @@
 class Branch {
   final int id;
+  final int? clientId;
   final String name;
   final String? code;
+  final String? brandName;
   final String? address;
+  final String? phone;
   final String? email;
+  final String? sector;
+  final String? parroquia;
+  final double? latitude;
+  final double? longitude;
+  final DateTime? geocodedAt;
 
-  Branch({required this.id, required this.name, this.code, this.address, this.email});
+  Branch({
+    required this.id,
+    this.clientId,
+    required this.name,
+    this.code,
+    this.brandName,
+    this.address,
+    this.phone,
+    this.email,
+    this.sector,
+    this.parroquia,
+    this.latitude,
+    this.longitude,
+    this.geocodedAt,
+  });
+
+  bool get isGeocoded => latitude != null && longitude != null;
 
   factory Branch.fromJson(Map<String, dynamic> json) {
     return Branch(
-      id: json['id'],
-      name: json['name'],
-      code: json['code'],
-      address: json['address'],
-      email: json['email'],
+      id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      clientId: json['client_id'] != null ? int.tryParse(json['client_id'].toString()) : null,
+      name: json['name']?.toString() ?? 'Sucursal',
+      code: json['code']?.toString(),
+      brandName: json['brand_name']?.toString(),
+      address: json['address']?.toString(),
+      phone: json['phone']?.toString(),
+      email: json['email']?.toString(),
+      sector: json['sector']?.toString(),
+      parroquia: json['parroquia']?.toString(),
+      latitude: json['latitude'] != null ? double.tryParse(json['latitude'].toString()) : null,
+      longitude: json['longitude'] != null ? double.tryParse(json['longitude'].toString()) : null,
+      geocodedAt: json['geocoded_at'] != null ? DateTime.tryParse(json['geocoded_at'].toString()) : null,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'client_id': clientId,
+      'name': name,
+      'code': code,
+      'brand_name': brandName,
+      'address': address,
+      'phone': phone,
+      'email': email,
+      'sector': sector,
+      'parroquia': parroquia,
+      'latitude': latitude,
+      'longitude': longitude,
+      'geocoded_at': geocodedAt?.toIso8601String(),
+    };
   }
 }
 
@@ -30,6 +80,9 @@ class Client {
   final String? phone;
   final double? creditLimit;
   final int? creditDays;
+  final bool isBlocked;
+  final DateTime? unblockedUntil;
+  final String? blockReason;
   final List<Branch> branches;
 
   Client({
@@ -44,24 +97,48 @@ class Client {
     this.phone,
     this.creditLimit,
     this.creditDays,
+    this.isBlocked = false,
+    this.unblockedUntil,
+    this.blockReason,
     this.branches = const [],
   });
 
+  bool get isTemporarilyUnblocked {
+    if (unblockedUntil == null) return false;
+    return DateTime.now().isBefore(unblockedUntil!);
+  }
+
+  bool get isBlockedForSales {
+    if (isTemporarilyUnblocked) return false;
+    return isBlocked;
+  }
+
   factory Client.fromJson(Map<String, dynamic> json) {
+    final String parsedName = (json['name']?.toString().isNotEmpty == true)
+        ? json['name'].toString()
+        : ((json['company_name']?.toString().isNotEmpty == true)
+            ? json['company_name'].toString()
+            : ((json['nombre_local']?.toString().isNotEmpty == true)
+                ? json['nombre_local'].toString()
+                : 'Cliente sin nombre'));
+
     return Client(
-      id: json['id'],
-      name: json['name'],
-      email: json['email'],
-      address: json['address'],
-      identification: json['identification'],
-      identificationType: json['identification_type'],
-      nombreLocal: json['nombre_local'] ?? json['nombreLocal'],
-      companyName: json['company_name'] ?? json['companyName'],
-      phone: json['phone'],
+      id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      name: parsedName,
+      email: json['email']?.toString(),
+      address: json['address']?.toString(),
+      identification: json['identification']?.toString(),
+      identificationType: json['identification_type']?.toString(),
+      nombreLocal: json['nombre_local']?.toString() ?? json['nombreLocal']?.toString(),
+      companyName: json['company_name']?.toString() ?? json['companyName']?.toString(),
+      phone: json['phone']?.toString(),
       creditLimit: json['credit_limit'] != null ? double.tryParse(json['credit_limit'].toString()) : null,
       creditDays: json['credit_days'] != null ? int.tryParse(json['credit_days'].toString()) : null,
-      branches: json['branches'] != null
-          ? (json['branches'] as List).map((b) => Branch.fromJson(b)).toList()
+      isBlocked: json['is_blocked'] == true || json['is_blocked'] == 1 || json['is_blocked'] == '1',
+      unblockedUntil: json['unblocked_until'] != null ? DateTime.tryParse(json['unblocked_until'].toString()) : null,
+      blockReason: json['block_reason']?.toString(),
+      branches: json['branches'] != null && json['branches'] is List
+          ? (json['branches'] as List).map((b) => Branch.fromJson(b as Map<String, dynamic>)).toList()
           : [],
     );
   }
@@ -90,14 +167,14 @@ class PendingDocument {
 
   factory PendingDocument.fromJson(Map<String, dynamic> json) {
     return PendingDocument(
-      id: json['id'],
-      documento: json['documento'],
-      fechaEmision: json['fecha_emision'],
-      fechaVencimiento: json['fecha_vencimiento'],
-      total: double.tryParse(json['total'].toString()) ?? 0.0,
-      saldo: double.tryParse(json['saldo'].toString()) ?? 0.0,
-      isOverdue: json['is_overdue'] == true,
-      daysOverdue: json['days_overdue'] != null ? int.tryParse(json['days_overdue'].toString()) ?? 0 : 0,
+      id: json['id']?.toString(),
+      documento: json['documento']?.toString(),
+      fechaEmision: json['fecha_emision']?.toString(),
+      fechaVencimiento: json['fecha_vencimiento']?.toString(),
+      total: double.tryParse(json['total']?.toString() ?? '0') ?? 0.0,
+      saldo: double.tryParse(json['saldo']?.toString() ?? '0') ?? 0.0,
+      isOverdue: json['is_overdue'] == true || json['is_overdue'] == 1 || json['is_overdue'] == '1',
+      daysOverdue: json['days_overdue'] != null ? (int.tryParse(json['days_overdue'].toString()) ?? 0) : 0,
     );
   }
 }
@@ -108,6 +185,10 @@ class ClientCreditStatus {
   final double? creditLimit;
   final int? creditDays;
   final bool hasCreditConfigured;
+  final bool isBlocked;
+  final DateTime? unblockedUntil;
+  final String? unblockTimeRemaining;
+  final bool isBlockedForSales;
   final double totalPendiente;
   final double totalVencido;
   final int countPendientes;
@@ -121,6 +202,10 @@ class ClientCreditStatus {
     this.creditLimit,
     this.creditDays,
     required this.hasCreditConfigured,
+    this.isBlocked = false,
+    this.unblockedUntil,
+    this.unblockTimeRemaining,
+    this.isBlockedForSales = false,
     required this.totalPendiente,
     required this.totalVencido,
     required this.countPendientes,
@@ -130,19 +215,31 @@ class ClientCreditStatus {
   });
 
   factory ClientCreditStatus.fromJson(Map<String, dynamic> json) {
+    final bool rawBlockedForSales = json['is_blocked_for_sales'] == true || json['is_blocked_for_sales'] == 1 || json['is_blocked_for_sales'] == '1';
+    final int cntVencidos = json['count_vencidos'] != null ? (int.tryParse(json['count_vencidos'].toString()) ?? 0) : 0;
+    final double totVencido = double.tryParse(json['total_vencido']?.toString() ?? '0') ?? 0.0;
+    final DateTime? unblockUntil = json['unblocked_until'] != null ? DateTime.tryParse(json['unblocked_until'].toString()) : null;
+    final bool isUnblockActive = unblockUntil != null && DateTime.now().isBefore(unblockUntil);
+
+    final bool isBlockedForSalesCalc = !isUnblockActive && (rawBlockedForSales || cntVencidos > 0 || totVencido > 0 || json['is_blocked'] == true || json['is_blocked'] == 1 || json['is_blocked'] == '1');
+
     return ClientCreditStatus(
-      clientId: json['client_id'],
-      identification: json['identification'],
+      clientId: int.tryParse(json['client_id']?.toString() ?? '0') ?? 0,
+      identification: json['identification']?.toString(),
       creditLimit: json['credit_limit'] != null ? double.tryParse(json['credit_limit'].toString()) : null,
       creditDays: json['credit_days'] != null ? int.tryParse(json['credit_days'].toString()) : null,
-      hasCreditConfigured: json['has_credit_configured'] == true,
-      totalPendiente: double.tryParse(json['total_pendiente'].toString()) ?? 0.0,
-      totalVencido: double.tryParse(json['total_vencido'].toString()) ?? 0.0,
-      countPendientes: json['count_pendientes'] ?? 0,
-      countVencidos: json['count_vencidos'] ?? 0,
+      hasCreditConfigured: json['has_credit_configured'] == true || json['has_credit_configured'] == 1 || json['has_credit_configured'] == '1',
+      isBlocked: json['is_blocked'] == true || json['is_blocked'] == 1 || json['is_blocked'] == '1',
+      unblockedUntil: unblockUntil,
+      unblockTimeRemaining: json['unblock_time_remaining']?.toString(),
+      isBlockedForSales: isBlockedForSalesCalc,
+      totalPendiente: double.tryParse(json['total_pendiente']?.toString() ?? '0') ?? 0.0,
+      totalVencido: totVencido,
+      countPendientes: json['count_pendientes'] != null ? (int.tryParse(json['count_pendientes'].toString()) ?? 0) : 0,
+      countVencidos: cntVencidos,
       availableCredit: json['available_credit'] != null ? double.tryParse(json['available_credit'].toString()) : null,
-      documents: json['documents'] != null
-          ? (json['documents'] as List<dynamic>).map((d) => PendingDocument.fromJson(d)).toList()
+      documents: json['documents'] != null && json['documents'] is List
+          ? (json['documents'] as List<dynamic>).map((d) => PendingDocument.fromJson(d as Map<String, dynamic>)).toList()
           : [],
     );
   }
@@ -158,7 +255,6 @@ class ClientCreditStatus {
   }
 }
 
-
 class Category {
   final int id;
   final String name;
@@ -167,8 +263,8 @@ class Category {
 
   factory Category.fromJson(Map<String, dynamic> json) {
     return Category(
-      id: json['id'],
-      name: json['name'],
+      id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      name: json['name']?.toString() ?? 'Categoría',
     );
   }
 }
@@ -193,17 +289,23 @@ class Product {
   });
 
   factory Product.fromJson(Map<String, dynamic> json) {
+    final rawStock = json['stock'];
+    int parsedStock = 0;
+    if (rawStock != null) {
+      parsedStock = int.tryParse(rawStock.toString()) ?? (double.tryParse(rawStock.toString())?.toInt() ?? 0);
+    }
+
     return Product(
-      id: json['id'],
-      name: json['name'],
-      price: double.parse(json['price'].toString()),
-      stock: json['stock'],
+      id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      name: json['name']?.toString() ?? 'Producto',
+      price: double.tryParse(json['price']?.toString() ?? '0') ?? 0.0,
+      stock: parsedStock,
       taxPercentage: json['tax_percentage'] != null
-          ? double.parse(json['tax_percentage'].toString())
+          ? (double.tryParse(json['tax_percentage'].toString()) ?? 15.0)
           : 15.0,
-      categoryId: json['category_id'],
+      categoryId: json['category_id'] != null ? int.tryParse(json['category_id'].toString()) : null,
       discountPercentage: json['discount_percentage'] != null
-          ? double.parse(json['discount_percentage'].toString())
+          ? (double.tryParse(json['discount_percentage'].toString()) ?? 0.0)
           : 0.0,
     );
   }
@@ -234,17 +336,17 @@ class Order {
 
   factory Order.fromJson(Map<String, dynamic> json) {
     return Order(
-      id: json['id'],
-      clientId: json['client_id'],
-      status: json['status'],
-      total: double.parse(json['total'].toString()),
-      createdAt: DateTime.parse(json['created_at']),
+      id: int.tryParse(json['id']?.toString() ?? '0') ?? 0,
+      clientId: int.tryParse(json['client_id']?.toString() ?? '0') ?? 0,
+      status: json['status']?.toString() ?? 'pending',
+      total: double.tryParse(json['total']?.toString() ?? '0') ?? 0.0,
+      createdAt: json['created_at'] != null ? (DateTime.tryParse(json['created_at'].toString()) ?? DateTime.now()) : DateTime.now(),
       deliveryDate: json['delivery_date'] != null
-          ? DateTime.parse(json['delivery_date'])
+          ? DateTime.tryParse(json['delivery_date'].toString())
           : null,
-      isInvoiced: json['is_invoiced'] == true || json['is_invoiced'] == 1,
-      isPreinvoiced: json['is_preinvoiced'] == true || json['is_preinvoiced'] == 1,
-      client: json['client'] != null ? Client.fromJson(json['client']) : null,
+      isInvoiced: json['is_invoiced'] == true || json['is_invoiced'] == 1 || json['is_invoiced'] == '1',
+      isPreinvoiced: json['is_preinvoiced'] == true || json['is_preinvoiced'] == 1 || json['is_preinvoiced'] == '1',
+      client: json['client'] != null && json['client'] is Map<String, dynamic> ? Client.fromJson(json['client'] as Map<String, dynamic>) : null,
     );
   }
 }

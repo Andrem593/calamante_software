@@ -11,6 +11,8 @@ use App\Http\Controllers\API\OrderController;
 Route::post('/login', [AuthController::class, 'login']);
 Route::get('/app-version', [DashboardController::class, 'appVersion']);
 Route::get('/orders/report-pdf', [OrderController::class, 'reportPdf']);
+Route::get('/orders/{id}/pdf', [OrderController::class, 'pdf']);
+
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -24,6 +26,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Búsqueda de clientes (debe ir antes del apiResource para no ser opacada)
     Route::get('/clients/search', [ClientController::class, 'search']);
     Route::get('/clients/{id}/branches', [ClientController::class, 'branches']);
+    Route::post('/clients/{id}/branches/census', [ClientController::class, 'saveBranchCensus']);
+    Route::post('/branches/census', [ClientController::class, 'saveBranchCensus']);
     Route::get('/clients/{id}/credit-status', [ClientController::class, 'getCreditStatus']);
     Route::apiResource('clients', ClientController::class)->only(['index', 'show']);
 

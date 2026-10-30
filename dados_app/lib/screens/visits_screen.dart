@@ -48,6 +48,11 @@ class _VisitsScreenState extends State<VisitsScreen> {
         elevation: 0,
         actions: [
           IconButton(
+            icon: const Icon(Icons.add_location_alt_outlined, color: Color(0xFF03A9F4)),
+            tooltip: 'Censo de Sucursales',
+            onPressed: () => Navigator.pushNamed(context, '/census'),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadVisits,
             tooltip: 'Actualizar',

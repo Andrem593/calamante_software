@@ -19,17 +19,23 @@ class ProductController extends Controller
                     ->orWhere('price', '<=', 0.0001);
             });
 
+        $isAtimasa = false;
         if ($clientId) {
             $client = \App\Models\Client::find($clientId);
             if ($client && trim($client->identification) === '0991331859001') {
-                $query->where(function ($q) {
-                    $q->where('name', 'like', '%FUNDAS DE HIELO LISTO 2.5 KG%')
-                        ->orWhere('name', 'like', '%Vasos 16%')
-                        ->orWhere('name', 'like', '%VASOS 16%')
-                        ->orWhere('name', 'like', '%Vasos 16onz%')
-                        ->orWhere('name', 'like', '%VASOS 16ONZ%');
-                });
+                $isAtimasa = true;
             }
+        }
+
+        if ($isAtimasa) {
+            $query->where(function ($q) {
+                $q->where('name', 'like', '%FUNDAS DE HIELO LISTO 2.5 KG%')
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%plan%'])
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%piloto%'])
+                    ->orWhereRaw('LOWER(name) LIKE ?', ['%vaso%']);
+            });
+        } else {
+            $query->whereRaw('LOWER(name) NOT LIKE ?', ['%hielo listo%']);
         }
 
         $products = $query->get(['id', 'name', 'price', 'description', 'stock', 'tax_percentage', 'category_id']);

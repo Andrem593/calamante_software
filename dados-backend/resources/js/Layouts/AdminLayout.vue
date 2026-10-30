@@ -46,9 +46,11 @@
                 <p class="text-slate-500 text-xs font-semibold uppercase tracking-wider px-3 mt-5 mb-2">Reportes</p>
                 <NavItem :href="route('admin.reports.index')" icon="trending-up" label="Resumen" />
                 <NavItem :href="route('admin.reports.sales')" icon="currency-dollar" label="Ventas" />
+                <NavItem :href="route('admin.reports.orders-routes')" icon="truck" label="Pedidos y Facturas por Ruta" />
                 <NavItem :href="route('admin.reports.presale-direct-sale')" icon="document-text" label="Resumen de ventass" />
                 <NavItem :href="route('admin.reports.active-clients-billing')" icon="chart-bar" label="Promedio Facturación 6M" />
                 <NavItem :href="route('admin.reports.branches-geolocation')" icon="map" label="Geolocalización Sucursales" />
+                <NavItem :href="route('admin.reports.route-map')" icon="map" label="Mapa por Rutas y Ventas" />
                 <NavItem :href="route('admin.reports.receivables')" icon="credit-card" label="Cartera de Clientes" />
                 <NavItem :href="route('admin.reports.sellers')" icon="user-group" label="Vendedores" />
             </nav>

@@ -37,6 +37,9 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
     Route::post('products/sync', [ProductController::class, 'sync'])->name('products.sync');
     Route::post('products/{product}/toggle-visibility', [ProductController::class, 'toggleVisibility'])->name('products.toggle-visibility');
     Route::post('clients/sync', [ClientController::class, 'sync'])->name('clients.sync');
+    Route::post('clients/{client}/unblock', [ClientController::class, 'unblock'])->name('clients.unblock');
+    Route::post('clients/{client}/block', [ClientController::class, 'toggleBlock'])->name('clients.block');
+
     
     Route::group(['middleware' => 'admin:superadmin'], function () {
         Route::get('settings', [SettingController::class, 'index'])->name('settings.index');
@@ -51,6 +54,7 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
     Route::match(['get', 'post'], 'visits/export-pdf-map', [VisitController::class, 'exportMapPdf'])->name('visits.export-pdf-map');
     Route::resource('visits', VisitController::class)->only(['index', 'destroy']);
     Route::post('orders/bulk-deliver', [OrderController::class, 'bulkDeliver'])->name('orders.bulk-deliver');
+    Route::post('orders/bulk-sync-contifico', [OrderController::class, 'bulkSyncContifico'])->name('orders.bulk-sync-contifico');
     Route::get('orders/bulk-print', [OrderController::class, 'bulkPrint'])->name('orders.bulk-print');
     Route::get('orders/{order}', [OrderController::class, 'show'])->name('orders.show');
     Route::get('orders/{order}/edit', [OrderController::class, 'edit'])->name('orders.edit');
@@ -72,6 +76,10 @@ Route::prefix('admin')->name('admin.')->middleware(['auth', 'admin'])->group(fun
     Route::get('reports/branches-geolocation/export', [ReportController::class, 'exportBranchesGeolocation'])->name('reports.branches-geolocation.export');
     Route::get('reports/presale-direct-sale', [ReportController::class, 'presaleDirectSale'])->name('reports.presale-direct-sale');
     Route::get('reports/presale-direct-sale/export', [ReportController::class, 'exportPresaleDirectSale'])->name('reports.presale-direct-sale.export');
+    Route::get('reports/route-map', [ReportController::class, 'routeMap'])->name('reports.route-map');
+    Route::get('reports/route-map/export', [ReportController::class, 'exportRouteMap'])->name('reports.route-map.export');
+    Route::get('reports/orders-routes', [ReportController::class, 'ordersRoutes'])->name('reports.orders-routes');
+    Route::get('reports/orders-routes/export', [ReportController::class, 'exportOrdersRoutes'])->name('reports.orders-routes.export');
 });
 
 Route::get('/login', function () {

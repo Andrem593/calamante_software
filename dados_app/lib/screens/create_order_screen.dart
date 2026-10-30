@@ -70,16 +70,71 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
 
   Future<void> _loadInitialData() async {
     debugPrint('CreateOrderScreen: _loadInitialData START');
-    await _loadCategories();
-    await _loadDraft();
-    await _loadProducts(clientId: _selectedClient?.id);
-    await _getCurrentLocation();
-    debugPrint('CreateOrderScreen: _loadInitialData END');
-    if (!mounted) return;
-    setState(() {
-      _initializing = false;
-      debugPrint('CreateOrderScreen: _initializing = false');
-    });
+    try {
+      await _clearSavedDraft();
+      await _loadPreferences();
+      await _loadCategories();
+      await _loadProducts();
+      await _getCurrentLocation();
+    } catch (e) {
+      debugPrint('Error en _loadInitialData: $e');
+    } finally {
+      debugPrint('CreateOrderScreen: _loadInitialData END');
+      if (mounted) {
+        setState(() {
+          _initializing = false;
+          debugPrint('CreateOrderScreen: _initializing = false');
+        });
+      }
+    }
+  }
+
+  Future<void> _loadPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedDirectInvoice = prefs.getBool('pref_is_direct_invoice');
+      if (savedDirectInvoice != null) {
+        _isDirectInvoice = savedDirectInvoice;
+      }
+
+      final savedDeliveryDateStr = prefs.getString('pref_delivery_date');
+      if (savedDeliveryDateStr != null) {
+        final parsed = DateTime.tryParse(savedDeliveryDateStr);
+        if (parsed != null) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          if (!parsed.isBefore(today)) {
+            _deliveryDate = parsed;
+          } else {
+            _deliveryDate = today;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error en _loadPreferences: $e');
+    }
+  }
+
+  Future<void> _clearSavedDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('draft_client_id');
+      await prefs.remove('draft_client_name');
+      await prefs.remove('draft_client_identification');
+      await prefs.remove('draft_client_nombre_local');
+      await prefs.remove('draft_client_company_name');
+      await prefs.remove('draft_branch_id');
+      await prefs.remove('draft_cart');
+      await prefs.remove('draft_notes');
+      await prefs.remove('draft_address');
+      await prefs.remove('draft_payment_method');
+      await prefs.remove('draft_branch_email');
+      await prefs.remove('draft_credit_days');
+      await prefs.remove('draft_is_direct_invoice');
+      await prefs.remove('draft_lat');
+      await prefs.remove('draft_lng');
+      await prefs.remove('draft_delivery_date');
+    } catch (_) {}
   }
 
   Future<void> _loadCategories() async {
@@ -107,14 +162,37 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           clientId != null ? '/products?client_id=$clientId' : '/products';
       final productsData = await api.get(endpoint);
       if (!mounted) return;
-      final prods = (productsData as List).map((j) => Product.fromJson(j)).toList();
+      List<Product> prods = [];
+      if (productsData is List) {
+        prods = productsData
+            .whereType<Map<String, dynamic>>()
+            .map((j) => Product.fromJson(j))
+            .toList();
+      }
+      final isAtimasa = _selectedClient != null &&
+          _selectedClient!.identification.trim() == '0991331859001';
+      if (!isAtimasa) {
+        prods = prods
+            .where((p) => !p.name.toUpperCase().contains('HIELO LISTO'))
+            .toList();
+      }
       setState(() => _products = prods);
-      await OfflineDatabaseService.instance.saveProducts(prods);
+      if (clientId == null) {
+        await OfflineDatabaseService.instance.saveProducts(prods);
+      }
     } catch (e) {
       debugPrint('Error o sin red al cargar productos. Cargando localmente: $e');
       final localProds = await OfflineDatabaseService.instance.getProductsLocal();
       if (mounted && localProds.isNotEmpty) {
-        setState(() => _products = localProds);
+        final isAtimasa = _selectedClient != null &&
+            _selectedClient!.identification.trim() == '0991331859001';
+        final filtered = isAtimasa
+            ? localProds
+            : localProds
+                .where((p) =>
+                    !p.name.toUpperCase().contains('HIELO LISTO'))
+                .toList();
+        setState(() => _products = filtered);
       }
     }
   }
@@ -134,7 +212,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         final data = await api
             .get('/clients/search?q=${Uri.encodeComponent(value.trim())}');
         if (!mounted) return;
-        final clients = (data as List).map((j) => Client.fromJson(j)).toList();
+        List<Client> clients = [];
+        if (data is List) {
+          clients = data
+              .whereType<Map<String, dynamic>>()
+              .map((j) => Client.fromJson(j))
+              .toList();
+        }
         setState(() => _searchResults = clients);
         await OfflineDatabaseService.instance.saveClients(clients);
       } catch (e) {
@@ -148,6 +232,7 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       }
     });
   }
+
 
   ClientCreditStatus? _creditStatus;
   bool _loadingCreditStatus = false;
@@ -183,17 +268,23 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         _creditDaysCtrl.text = '0';
       }
     });
-    _saveDraft();
 
     try {
       final api = context.read<ApiService>();
       try {
         final data = await api.get('/clients/${client.id}/branches');
         if (mounted) {
-          final branches = (data as List).map((j) => Branch.fromJson(j)).toList();
+          List<Branch> branches = [];
+          if (data is List) {
+            branches = data
+                .whereType<Map<String, dynamic>>()
+                .map((j) => Branch.fromJson(j))
+                .toList();
+          }
           setState(() => _branches = branches);
           await OfflineDatabaseService.instance.saveBranches(client.id, branches);
         }
+
       } catch (e) {
         debugPrint('Sucursales falló online. Cargando localmente: $e');
         final localBranches = await OfflineDatabaseService.instance.getBranchesLocal(client.id);
@@ -224,7 +315,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               _creditDaysCtrl.text = '0';
             }
           });
-          _saveDraft();
           _checkAndShowCreditDialog(creditStatus);
         }
       } catch (e) {
@@ -253,7 +343,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
               _creditDaysCtrl.text = '0';
             }
           });
-          _saveDraft();
           _checkAndShowCreditDialog(offlineStatus);
         }
       }
@@ -277,12 +366,12 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       _searchResults = [];
       _branches = [];
       _selectedBranch = null;
+      _branchEmailCtrl.clear();
       _creditStatus = null;
       _loadingCreditStatus = false;
       _paymentMethod = 'Efectivo';
       _creditDaysCtrl.text = '0';
     });
-    _saveDraft();
     _loadProducts();
   }
 
@@ -318,7 +407,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         );
       }
       setState(() {});
-      _saveDraft();
     } catch (e) {
       debugPrint('CreateOrderScreen: Error en Geolocator: $e');
       if (mounted) {
@@ -330,78 +418,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     }
   }
 
-  Future<void> _saveDraft() async {
-    if (_initializing) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('draft_client_id', _selectedClient?.id ?? -1);
-    await prefs.setString('draft_client_name', _selectedClient?.name ?? '');
-    await prefs.setInt('draft_branch_id', _selectedBranch?.id ?? -1);
-    await prefs.setString('draft_cart',
-        jsonEncode(_cart.map((k, v) => MapEntry(k.toString(), v))));
-    await prefs.setString('draft_notes', _notesCtrl.text);
-    await prefs.setString('draft_address', _addressCtrl.text);
-    await prefs.setString('draft_payment_method', _paymentMethod);
-    await prefs.setString('draft_branch_email', _branchEmailCtrl.text);
-    await prefs.setString('draft_credit_days', _creditDaysCtrl.text);
-    await prefs.setBool('draft_is_direct_invoice', _isDirectInvoice);
-    if (_currentPosition != null) {
-      await prefs.setDouble('draft_lat', _currentPosition!.latitude);
-      await prefs.setDouble('draft_lng', _currentPosition!.longitude);
-    }
-    await prefs.setString(
-        'draft_delivery_date', _deliveryDate.toIso8601String());
-  }
-
-  Future<void> _loadDraft() async {
-    final prefs = await SharedPreferences.getInstance();
-    final clientId = prefs.getInt('draft_client_id') ?? -1;
-    final clientName = prefs.getString('draft_client_name') ?? '';
-    final cartStr = prefs.getString('draft_cart');
-    final deliveryDateStr = prefs.getString('draft_delivery_date');
-
-    if (!mounted) return;
-    setState(() {
-      if (deliveryDateStr != null) {
-        _deliveryDate = DateTime.parse(deliveryDateStr);
-      }
-      // Restaurar cliente desde draft (solo nombre e id — sin llamada al servidor aquí)
-      if (clientId != -1 && clientName.isNotEmpty) {
-        _selectedClient = Client(id: clientId, name: clientName);
-        _clientSearchCtrl.text = clientName;
-      }
-      if (cartStr != null) {
-        final Map<String, dynamic> decoded = jsonDecode(cartStr);
-        _cart.clear();
-        decoded.forEach((key, value) {
-          _cart[int.parse(key)] = value as int;
-        });
-      }
-      _notesCtrl.text = prefs.getString('draft_notes') ?? '';
-      _addressCtrl.text = prefs.getString('draft_address') ?? '';
-      _branchEmailCtrl.text = prefs.getString('draft_branch_email') ?? '';
-      _paymentMethod = prefs.getString('draft_payment_method') ?? 'Efectivo';
-      _creditDaysCtrl.text = prefs.getString('draft_credit_days') ?? '30';
-      _isDirectInvoice = prefs.getBool('draft_is_direct_invoice') ?? false;
-
-      final lat = prefs.getDouble('draft_lat');
-      final lng = prefs.getDouble('draft_lng');
-      if (lat != null && lng != null) {
-        _currentPosition = Position(
-          latitude: lat,
-          longitude: lng,
-          timestamp: DateTime.now(),
-          accuracy: 0,
-          altitude: 0,
-          heading: 0,
-          speed: 0,
-          speedAccuracy: 0,
-          altitudeAccuracy: 0,
-          headingAccuracy: 0,
-        );
-      }
-    });
-  }
-
   void _goToReview() {
     if (_selectedClient == null || _cart.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -410,15 +426,46 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       return;
     }
 
+    if (_creditStatus != null && _creditStatus!.isBlockedForSales) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.block, color: Colors.red, size: 28),
+              SizedBox(width: 8),
+              Text('Cliente Bloqueado', style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: const Text(
+            'El cliente tiene facturas vencidas y se encuentra BLOQUEADO. No se le puede vender hasta que un administrador le otorgue un desbloqueo temporal por N días.',
+            style: TextStyle(fontSize: 14),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700, foregroundColor: Colors.white),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     final items = _cart.entries.where((e) => e.value > 0).map((e) {
-      final product = _products.firstWhere((p) => p.id == e.key);
-      return {
-        'product_id': product.id,
-        'quantity': e.value,
-        'price': product.price,
-        'discount_percentage': product.discountPercentage,
-      };
-    }).toList();
+      final matches = _products.where((p) => p.id == e.key);
+      if (matches.isNotEmpty) {
+        final product = matches.first;
+        return {
+          'product_id': product.id,
+          'quantity': e.value,
+          'price': product.price,
+          'discount_percentage': product.discountPercentage,
+        };
+      }
+      return null;
+    }).whereType<Map<String, dynamic>>().toList();
 
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -437,7 +484,9 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
       'address': _addressCtrl.text,
       'branch_email': _branchEmailCtrl.text,
       'payment_method': _paymentMethod,
-      'credit_days': int.tryParse(_creditDaysCtrl.text) ?? 30,
+      'credit_days': _paymentMethod == 'Crédito'
+          ? (int.tryParse(_creditDaysCtrl.text) ?? 30)
+          : 0,
       'is_direct_invoice': _isDirectInvoice,
       'delivery_date': _deliveryDate,
     });
@@ -448,28 +497,29 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
   // ─────────────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('Tomar Pedido',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+    try {
+      return Scaffold(
         backgroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: _loading || _initializing
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.all(20.0),
-                    children: [
-                      // ── Búsqueda de cliente ─────────────────────────────────
-                      const Text('Detalles del Cliente',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 10),
-                      _buildClientSearch(),
+        appBar: AppBar(
+          title: const Text('Tomar Pedido',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          backgroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: _loading || _initializing
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.all(20.0),
+                      children: [
+                        // ── Búsqueda de cliente ─────────────────────────────────
+                        const Text('Detalles del Cliente',
+                            style: TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        _buildClientSearch(),
                       if (_selectedClient != null) _buildCreditSummaryCard(),
                       const SizedBox(height: 12),
 
@@ -485,7 +535,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                           TextField(
                             controller: _branchEmailCtrl,
                             keyboardType: TextInputType.emailAddress,
-                            onChanged: (_) => _saveDraft(),
                             decoration: InputDecoration(
                               hintText: 'ejemplo@correo.com',
                               fillColor: const Color(0xFFF1FBFE),
@@ -647,37 +696,93 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       const SizedBox(height: 24),
 
                       // ── Forma de pago ───────────────────────────────────────
-                      const Text('Forma de Pago',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 10),
-                      DropdownButtonFormField<String>(
-                        decoration: InputDecoration(
-                          fillColor: const Color(0xFFF1FBFE),
-                          filled: true,
-                          prefixIcon: const Icon(Icons.payment,
-                              color: Colors.lightBlue),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none),
+                      // ── Forma de Pago (Bloqueada / Dependiente del Cliente) ──
+                      Row(
+                        children: [
+                          const Text('Forma de Pago',
+                              style: TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.bold)),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.blueGrey.shade50,
+                              borderRadius: BorderRadius.circular(6),
+                              border:
+                                  Border.all(color: Colors.blueGrey.shade200),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.lock,
+                                    size: 12, color: Colors.blueGrey.shade600),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Fijado por Cliente',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.blueGrey.shade700,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1FBFE),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.lightBlue.shade100),
                         ),
-                        value: _paymentMethod,
-                        items: [
-                          'Efectivo',
-                          'Transferencia',
-                          'Cheque',
-                          'Crédito'
-                        ]
-                            .map((m) =>
-                                DropdownMenuItem(value: m, child: Text(m)))
-                            .toList(),
-                        onChanged: (v) {
-                          setState(() => _paymentMethod = v!);
-                          _saveDraft();
-                          if (v == 'Crédito') {
-                            _checkCreditWarningOnPaymentMethod();
-                          }
-                        },
+                        child: Row(
+                          children: [
+                            Icon(
+                              _paymentMethod == 'Crédito'
+                                  ? Icons.credit_card
+                                  : Icons.payments_outlined,
+                              color: Colors.lightBlue.shade700,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _selectedClient == null
+                                        ? 'Selecciona un cliente'
+                                        : _paymentMethod,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                      color: _selectedClient == null
+                                          ? Colors.grey
+                                          : Colors.black87,
+                                    ),
+                                  ),
+                                  if (_selectedClient != null) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      _paymentMethod == 'Crédito'
+                                          ? 'Cliente con línea de crédito habilitada'
+                                          : 'Cliente configurado para ventas de contado',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey.shade600),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            Icon(Icons.lock_outline,
+                                size: 18, color: Colors.grey.shade400),
+                          ],
+                        ),
                       ),
 
                       const SizedBox(height: 10),
@@ -690,32 +795,83 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                             'Genera factura directa en lugar de prefactura'),
                         value: _isDirectInvoice,
                         activeColor: Colors.lightBlue,
-                        onChanged: (bool value) {
+                        onChanged: (bool value) async {
                           setState(() => _isDirectInvoice = value);
-                          _saveDraft();
+                          try {
+                            final prefs =
+                                await SharedPreferences.getInstance();
+                            await prefs.setBool(
+                                'pref_is_direct_invoice', value);
+                          } catch (_) {}
                         },
                       ),
 
                       if (_paymentMethod == 'Crédito') ...[
                         const SizedBox(height: 16),
-                        const Text('Días de Crédito',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 10),
-                        TextField(
-                          controller: _creditDaysCtrl,
-                          keyboardType: TextInputType.number,
-                          onChanged: (_) => _saveDraft(),
-                          decoration: InputDecoration(
-                            hintText: 'Ej: 30',
-                            fillColor: const Color(0xFFF1FBFE),
-                            filled: true,
-                            prefixIcon: const Icon(Icons.calendar_today,
-                                color: Colors.lightBlue),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
+                        Row(
+                          children: [
+                            const Text('Días de Crédito',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: Colors.blueGrey.shade50,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                    color: Colors.blueGrey.shade200),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.lock,
+                                      size: 12,
+                                      color: Colors.blueGrey.shade600),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'No editable',
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.blueGrey.shade700,
+                                        fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF1FBFE),
+                            borderRadius: BorderRadius.circular(12),
+                            border:
+                                Border.all(color: Colors.lightBlue.shade100),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.calendar_today,
+                                  color: Colors.lightBlue.shade700),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  '${_creditDaysCtrl.text.isNotEmpty && _creditDaysCtrl.text != "0" ? _creditDaysCtrl.text : "30"} días de plazo',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                              Icon(Icons.lock_outline,
+                                  size: 18, color: Colors.grey.shade400),
+                            ],
                           ),
                         ),
                       ],
@@ -729,7 +885,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       const SizedBox(height: 10),
                       TextField(
                         controller: _addressCtrl,
-                        onChanged: (_) => _saveDraft(),
                         decoration: InputDecoration(
                           hintText: 'Ej: Calle Principal 123...',
                           fillColor: const Color(0xFFF1FBFE),
@@ -753,7 +908,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       TextField(
                         controller: _notesCtrl,
                         maxLines: 3,
-                        onChanged: (_) => _saveDraft(),
                         decoration: InputDecoration(
                           hintText: 'Escribe aquí cualquier nota importante...',
                           fillColor: const Color(0xFFF1FBFE),
@@ -776,16 +930,26 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       const SizedBox(height: 10),
                       InkWell(
                         onTap: () async {
+                          final now = DateTime.now();
+                          final today = DateTime(now.year, now.month, now.day);
+                          final initial =
+                              _deliveryDate.isBefore(today) ? today : _deliveryDate;
                           final picked = await showDatePicker(
                             context: context,
-                            initialDate: _deliveryDate,
-                            firstDate: DateTime.now(),
+                            initialDate: initial,
+                            firstDate: today,
                             lastDate:
-                                DateTime.now().add(const Duration(days: 30)),
+                                today.add(const Duration(days: 90)),
                           );
                           if (picked != null) {
                             setState(() => _deliveryDate = picked);
-                            _saveDraft();
+                            try {
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              await prefs.setString(
+                                  'pref_delivery_date',
+                                  picked.toIso8601String().split('T')[0]);
+                            } catch (_) {}
                           }
                         },
                         child: Container(
@@ -941,7 +1105,50 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                 ),
               ],
             ),
-    );
+      );
+    } catch (e, stack) {
+      debugPrint('Error crítico capturado en build de CreateOrderScreen: $e\n$stack');
+      return Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          title: const Text('Tomar Pedido', style: TextStyle(fontWeight: FontWeight.bold)),
+          backgroundColor: Colors.white,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.info_outline, color: Color(0xFF03A9F4), size: 48),
+                const SizedBox(height: 16),
+                const Text(
+                  'Preparando la pantalla de nuevo pedido...',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _initializing = true;
+                    });
+                    _loadInitialData();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reiniciar formulario'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF03A9F4),
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1166,7 +1373,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                                   _selectedBranch = null;
                                   _branchEmailCtrl.clear();
                                 });
-                                _saveDraft();
                                 Navigator.pop(context);
                               },
                             ),
@@ -1185,7 +1391,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                                       _branchEmailCtrl.text = b.email!;
                                     }
                                   });
-                                  _saveDraft();
                                   Navigator.pop(context);
                                 },
                               );
@@ -1277,10 +1482,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     double subtotal = 0;
     _cart.forEach((productId, qty) {
       if (qty > 0) {
-        final product = _products.firstWhere((p) => p.id == productId);
-        final double discountedPrice =
-            product.price * (1 - product.discountPercentage / 100);
-        subtotal += discountedPrice * qty;
+        final matches = _products.where((p) => p.id == productId);
+        if (matches.isNotEmpty) {
+          final product = matches.first;
+          final double discountedPrice =
+              product.price * (1 - product.discountPercentage / 100);
+          subtotal += discountedPrice * qty;
+        }
       }
     });
     return subtotal;
@@ -1290,10 +1498,13 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
     double iva = 0;
     _cart.forEach((productId, qty) {
       if (qty > 0) {
-        final product = _products.firstWhere((p) => p.id == productId);
-        final double discountedPrice =
-            product.price * (1 - product.discountPercentage / 100);
-        iva += (discountedPrice * qty) * (product.taxPercentage / 100);
+        final matches = _products.where((p) => p.id == productId);
+        if (matches.isNotEmpty) {
+          final product = matches.first;
+          final double discountedPrice =
+              product.price * (1 - product.discountPercentage / 100);
+          iva += (discountedPrice * qty) * (product.taxPercentage / 100);
+        }
       }
     });
     return iva;
@@ -1309,7 +1520,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           onPressed: qty > 0
               ? () {
                   setState(() => _cart[product.id] = qty - 1);
-                  _saveDraft();
                 }
               : null,
         ),
@@ -1332,7 +1542,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
           icon: const Icon(Icons.add_circle_outline, color: Colors.lightBlue),
           onPressed: () {
             setState(() => _cart[product.id] = qty + 1);
-            _saveDraft();
           },
         ),
       ],
@@ -1372,7 +1581,6 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
             onPressed: () {
               final newQty = int.tryParse(qtyCtrl.text) ?? 0;
               setState(() => _cart[product.id] = newQty);
-              _saveDraft();
               Navigator.pop(context);
             },
             child: const Text('Aceptar'),
@@ -1474,10 +1682,11 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
                       border: Border.all(color: Colors.orange.shade300),
                     ),
                     child: Text(
-                      '⚠️ Poco Cupo Disponible: Le quedan \$${status.availableCredit?.toStringAsFixed(2)} de \$${status.creditLimit?.toStringAsFixed(2)}.',
+                      '⚠️ Poco Cupo Disponible: Le quedan \$${status.availableCredit?.toStringAsFixed(2) ?? "0.00"} de \$${status.creditLimit?.toStringAsFixed(2) ?? "0.00"}.',
                       style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
+
                 const Divider(),
                 _buildCreditDetailRow('Días de crédito:', status.creditDays != null && status.creditDays! > 0 ? '${status.creditDays} días' : 'Sin asignación'),
                 _buildCreditDetailRow('Monto límite (Cupo):', status.creditLimit != null && status.creditLimit! > 0 ? '\$${status.creditLimit!.toStringAsFixed(2)}' : 'Sin asignación'),
@@ -1651,34 +1860,5 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         ],
       ),
     );
-  }
-
-  void _checkCreditWarningOnPaymentMethod() {
-    final client = _selectedClient;
-    if (client == null) return;
-
-    final noLimit = client.creditLimit == null || client.creditLimit! <= 0;
-    final noDays = client.creditDays == null || client.creditDays! <= 0;
-
-    if (noLimit || noDays) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          backgroundColor: Colors.amber.shade900,
-          content: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.white),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'El cliente NO tiene días de crédito ni monto asignado.',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
   }
 }

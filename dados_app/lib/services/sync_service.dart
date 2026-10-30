@@ -73,11 +73,90 @@ class SyncService extends ChangeNotifier {
 
   Future<void> checkPendingCounts() async {
     try {
-      _pendingOrdersCount = await _db.getUnsyncedOrdersCount();
+      final orders = await _db.getUnsyncedOrdersCount();
+      final censuses = await _db.getUnsyncedCensusesCount();
+      _pendingOrdersCount = orders + censuses;
       notifyListeners();
     } catch (e) {
       debugPrint('Error contando registros pendientes: $e');
     }
+  }
+
+  Future<bool> syncSingleOrder(int localId, ApiService apiService) async {
+    final orderRow = await _db.getOfflineOrderById(localId);
+    if (orderRow == null) {
+      throw Exception('Pedido local #$localId no encontrado.');
+    }
+
+    final String payloadJson = orderRow['payload_json'];
+    final Map<String, dynamic> payload = jsonDecode(payloadJson);
+
+    // CRÍTICO: Conservar la fecha de creación original registrada en offline_orders
+    if (orderRow['created_at'] != null) {
+      payload['created_at'] ??= orderRow['created_at'];
+    }
+
+    try {
+      await apiService.post('/orders', payload);
+      await _db.markOrderSynced(localId);
+      await checkPendingCounts();
+      return true;
+    } catch (e) {
+      debugPrint('Error sincronizando pedido individual local #$localId: $e');
+      final errorStr = e.toString().toLowerCase();
+      if (errorStr.contains('duplicado') || errorStr.contains('already exists')) {
+        await _db.markOrderSynced(localId);
+        await checkPendingCounts();
+        return true;
+      }
+      await _db.updateOrderSyncError(localId, e.toString());
+      await checkPendingCounts();
+      rethrow;
+    }
+  }
+
+  Future<int> reconcileWithRemoteOrders(List<dynamic> remoteOrders) async {
+    if (remoteOrders.isEmpty) return 0;
+    final unsynced = await _db.getUnsyncedOrders();
+    if (unsynced.isEmpty) return 0;
+
+    int reconciledCount = 0;
+    for (var offlineOrder in unsynced) {
+      final int localId = offlineOrder['id'];
+      final int clientId = offlineOrder['client_id'];
+      final double total = (offlineOrder['total'] as num?)?.toDouble() ?? 0.0;
+      final String? createdAtStr = offlineOrder['created_at'];
+
+      final alreadyOnServer = remoteOrders.any((remote) {
+        final remoteClientId = remote['client_id'] ?? remote['client']?['id'];
+        if (remoteClientId != clientId) return false;
+
+        final double remoteTotal = double.tryParse(remote['total']?.toString() ?? '0.0') ?? 0.0;
+        if ((remoteTotal - total).abs() > 0.05) return false;
+
+        if (createdAtStr != null && remote['created_at'] != null) {
+          try {
+            final dtOff = DateTime.parse(createdAtStr);
+            final dtRem = DateTime.parse(remote['created_at'].toString());
+            if (dtOff.year == dtRem.year && dtOff.month == dtRem.month && dtOff.day == dtRem.day) {
+              return true;
+            }
+          } catch (_) {}
+        }
+        return false;
+      });
+
+      if (alreadyOnServer) {
+        debugPrint('SyncService: Reconciliando pedido local #$localId (ya existe en servidor). Marcando como sincronizado.');
+        await _db.markOrderSynced(localId);
+        reconciledCount++;
+      }
+    }
+
+    if (reconciledCount > 0) {
+      await checkPendingCounts();
+    }
+    return reconciledCount;
   }
 
   Future<void> syncPendingData(ApiService apiService) async {
@@ -86,22 +165,52 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1. Sincronizar Pedidos en cola
+      final now = DateTime.now();
+
+      // 1. Sincronizar Pedidos en cola: ÚNICAMENTE los del MISMO DÍA (hoy)
       final pendingOrders = await _db.getUnsyncedOrders();
       int successOrders = 0;
 
       for (var orderRow in pendingOrders) {
         final int localId = orderRow['id'];
+        final String? createdAtStr = orderRow['created_at'];
+
+        // Comprobar si el documento fue creado hoy
+        bool isSameDay = false;
+        if (createdAtStr != null) {
+          try {
+            final dt = DateTime.parse(createdAtStr);
+            isSameDay = (dt.year == now.year && dt.month == now.month && dt.day == now.day);
+          } catch (_) {}
+        }
+
+        // Si es de un día anterior, NO auto-sincronizar en segundo plano (requiere sincronización individual)
+        if (!isSameDay) {
+          debugPrint('SyncService: Pedido local #$localId de fecha anterior ($createdAtStr) omitido de auto-sync masivo.');
+          continue;
+        }
+
         final String payloadJson = orderRow['payload_json'];
         final Map<String, dynamic> payload = jsonDecode(payloadJson);
+
+        if (createdAtStr != null && payload['created_at'] == null) {
+          payload['created_at'] = createdAtStr;
+        }
 
         try {
           await apiService.post('/orders', payload);
           await _db.markOrderSynced(localId);
           successOrders++;
+          debugPrint('SyncService: Pedido del día local #$localId auto-sincronizado con éxito.');
         } catch (e) {
-          debugPrint('Error sincronizando pedido local #$localId: $e');
-          await _db.updateOrderSyncError(localId, e.toString());
+          debugPrint('Error auto-sincronizando pedido local #$localId: $e');
+          final errorStr = e.toString().toLowerCase();
+          if (errorStr.contains('duplicado') || errorStr.contains('already exists')) {
+            await _db.markOrderSynced(localId);
+            successOrders++;
+          } else {
+            await _db.updateOrderSyncError(localId, e.toString());
+          }
         }
       }
 
@@ -120,13 +229,43 @@ class SyncService extends ChangeNotifier {
         }
       }
 
+      // 3. Sincronizar Censos en cola
+      final pendingCensuses = await _db.getUnsyncedCensuses();
+      int successCensuses = 0;
+      for (var censusRow in pendingCensuses) {
+        final int localId = censusRow['id'];
+        final int clientId = censusRow['client_id'];
+        final String payloadJson = censusRow['payload_json'];
+        final Map<String, dynamic> payload = jsonDecode(payloadJson);
+
+        try {
+          await apiService.saveBranchCensus(payload, clientId: clientId);
+          await _db.markCensusSynced(localId);
+          successCensuses++;
+        } catch (e) {
+          debugPrint('Error sincronizando censo local #$localId: $e');
+          await _db.updateCensusSyncError(localId, e.toString());
+        }
+      }
+
+      // 4. Reconciliar pedidos con el servidor para verificar si ya existen y desmarcarlos de pendientes
+      try {
+        final remoteOrders = await apiService.get('/orders');
+        if (remoteOrders is List) {
+          await reconcileWithRemoteOrders(remoteOrders);
+        }
+      } catch (e) {
+        debugPrint('Error verificando pedidos con el servidor: $e');
+      }
+
       await checkPendingCounts();
 
-      if (successOrders > 0) {
-        _lastSyncMessage = 'Se sincronizaron $successOrders pedido(s) pendientes.';
-      } else {
-        _lastSyncMessage = null;
-      }
+      List<String> messages = [];
+      if (successOrders > 0) messages.add('$successOrders pedido(s) del día');
+      if (successCensuses > 0) messages.add('$successCensuses censo(s)');
+      _lastSyncMessage = messages.isNotEmpty
+          ? 'Se sincronizaron ${messages.join(' y ')} pendientes.'
+          : null;
     } catch (e) {
       debugPrint('Error durante syncPendingData: $e');
     } finally {
